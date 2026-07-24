@@ -66,7 +66,7 @@ gravixlayer-cli/
 │   │   │   └── ops.rs        # list/get/invoke/stream/logs/destroy
 │   │   ├── billing.rs        # summary/history/quota
 │   │   ├── completions.rs    # shell completion generation
-│   │   └── update.rs         # self-upgrade via GitHub Releases (self_update)
+│   │   └── update.rs         # self-upgrade via GitHub Releases (native reqwest)
 │   ├── terminal/
 │   │   ├── protocol.rs       # Binary frame encode/decode (0x01–0x04)
 │   │   └── pty.rs            # crossterm raw mode, SIGWINCH resize

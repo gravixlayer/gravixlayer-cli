@@ -296,7 +296,7 @@ Add the corresponding match arm in the wizard and the model provider matrix.
 
 ## Release Process
 
-Codex-shaped tag pipeline (no cargo-dist, Cosign, or npm on day one).
+Tag-driven release pipeline (no cargo-dist, Cosign, or npm yet).
 
 | Item | Convention |
 |---|---|
@@ -320,14 +320,8 @@ git push origin main v0.1.0
 
 The tag **must** match `Cargo.toml` (the `tag-check` job enforces this).  
 Alphas (`v0.2.0-alpha.1`) are published as GitHub prereleases so
-`curl …/install | bash` (no `GRAVIXLAYER_VERSION`) continues to install the
+`curl …/install | sh` (no `GRAVIXLAYER_VERSION`) continues to install the
 latest **stable** release.
-
-### Hosting `cli.gravixlayer.ai/install`
-
-Point the CDN/static host at the `install.sh` / `install.ps1` assets from the
-latest stable GitHub Release (or serve the copies in `scripts/` and let them
-fetch binaries from GitHub Releases).
 
 ### Version is the single source of truth
 

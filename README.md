@@ -8,8 +8,8 @@ Manage runtimes (sandboxes), templates, agents, identity providers, network poli
 
 ### macOS / Linux
 
-```bash
-curl -fsSL https://cli.gravixlayer.ai/install | bash
+```sh
+curl -fsSL https://cli.gravixlayer.ai/install | sh
 ```
 
 ### Windows (PowerShell)

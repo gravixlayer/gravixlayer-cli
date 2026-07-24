@@ -31,7 +31,7 @@ jobs:
       - name: test
         run: cargo test --all-targets --locked
 
-  # Linux musl static binaries (used by the curl|bash installer).
+  # Linux musl static binaries (used by the curl|sh installer).
   linux-musl:
     name: Build (${{ matrix.target }})
     runs-on: ubuntu-latest

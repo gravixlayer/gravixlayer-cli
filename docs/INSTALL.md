@@ -4,17 +4,17 @@
 
 ### macOS / Linux
 
-```bash
-curl -fsSL https://cli.gravixlayer.ai/install | bash
+```sh
+curl -fsSL https://cli.gravixlayer.ai/install | sh
 ```
 
-Installs `gravixlayer` and a `grx` symlink. Default install directory is
-`/usr/local/bin`; falls back to `~/.local/bin` when sudo is unavailable.
+Installs `gravixlayer` and a `grx` symlink into `~/.local/bin` by default
+(no sudo). Override with `GRAVIXLAYER_INSTALL_DIR`.
 
 Pin a version:
 
-```bash
-GRAVIXLAYER_VERSION=v0.1.0 curl -fsSL https://cli.gravixlayer.ai/install | bash
+```sh
+GRAVIXLAYER_VERSION=v0.1.0 curl -fsSL https://cli.gravixlayer.ai/install | sh
 ```
 
 ### Windows (PowerShell)
@@ -35,7 +35,7 @@ and `.sha256` checksum, verify integrity, and install the binary.
 
 ### Release asset names
 
-Archives follow Rust target triples (same convention as Codex / many Rust CLIs):
+Archives follow Rust target triples (common for native CLI releases):
 
 | Platform | Archive |
 |---|---|
@@ -149,8 +149,10 @@ Or re-run the install script.
 
 ### macOS / Linux
 
-```bash
-sudo rm -f /usr/local/bin/gravixlayer /usr/local/bin/grx
+```sh
+rm -f ~/.local/bin/gravixlayer ~/.local/bin/grx
+# If you previously installed to /usr/local/bin:
+#   sudo rm -f /usr/local/bin/gravixlayer /usr/local/bin/grx
 rm -rf ~/.gravixlayer
 ```
 

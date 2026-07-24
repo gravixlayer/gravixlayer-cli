@@ -1,4 +1,4 @@
-# Tag-driven release pipeline (Codex-shaped, day-one scope).
+# Tag-driven release pipeline.
 #
 # Trigger: push a version tag matching vX.Y.Z or vX.Y.Z-alpha.N
 #   git tag -a v0.1.0 -m "Release 0.1.0"
@@ -9,7 +9,7 @@
 #   gravixlayer-<tag>-<rust-triple>.zip      (Windows)
 #   + matching .sha256 side-cars, SHA256SUMS, install.sh, install.ps1
 #
-# Skipped on day one (intentionally): Cosign, macOS notarization, npm, Bazel, CDN.
+# Not included in this release: Cosign, macOS notarization, npm, Bazel, binary CDN.
 
 name: Release
 
