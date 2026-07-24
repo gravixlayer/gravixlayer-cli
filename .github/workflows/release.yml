@@ -4,11 +4,10 @@
 #   git tag -a v0.1.0 -m "Release 0.1.0"
 #   git push origin v0.1.0
 #
-# Produces GitHub Release assets expected by scripts/install.sh:
-#   gravixlayer-<tag>-<rust-triple>.tar.gz
-#   gravixlayer-<tag>-<rust-triple>.tar.gz.sha256
-#   SHA256SUMS
-#   install.sh / install.ps1
+# Produces GitHub Release assets expected by scripts/install.sh / install.ps1:
+#   gravixlayer-<tag>-<rust-triple>.tar.gz   (Unix)
+#   gravixlayer-<tag>-<rust-triple>.zip      (Windows)
+#   + matching .sha256 side-cars, SHA256SUMS, install.sh, install.ps1
 #
 # Skipped on day one (intentionally): Cosign, macOS notarization, npm, Bazel, CDN.
 
@@ -52,9 +51,11 @@ jobs:
           case "$VERSION" in
             *-*) PRERELEASE=true ;;
           esac
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          {
+            echo "tag=$TAG"
+            echo "version=$VERSION"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
           echo "Validated tag=$TAG cargo=$CARGO_VERSION prerelease=$PRERELEASE"
 
   build:
@@ -104,7 +105,9 @@ jobs:
         if: ${{ !matrix.use_cross }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      - name: Package archive + checksum
+      # Unix packaging must stay on bash; do not call PowerShell with Git Bash paths.
+      - name: Package Unix archive + checksum
+        if: runner.os != 'Windows'
         shell: bash
         env:
           TARGET: ${{ matrix.target }}
@@ -113,41 +116,46 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           BIN_SRC="target/${TARGET}/release/gravixlayer"
-          EXT=""
-          if [[ "$TARGET" == *windows* ]]; then
-            BIN_SRC="${BIN_SRC}.exe"
-            EXT=".exe"
-          fi
           test -f "$BIN_SRC"
-
-          STAGE="$(mktemp -d 2>/dev/null || mktemp -d -t glpack)"
-          DIST_DIR="$(pwd)/dist"
-          mkdir -p "$DIST_DIR"
-          cp "$BIN_SRC" "${STAGE}/gravixlayer${EXT}"
-          if [[ -z "$EXT" ]]; then
-            chmod +x "${STAGE}/gravixlayer"
-          fi
-
-          if [[ "$TARGET" == *windows* ]]; then
-            ARCHIVE="gravixlayer-${TAG}-${TARGET}.zip"
-            if command -v zip >/dev/null 2>&1; then
-              (cd "$STAGE" && zip -q "${DIST_DIR}/${ARCHIVE}" "gravixlayer${EXT}")
-            else
-              powershell.exe -NoProfile -Command \
-                "Compress-Archive -Path '${STAGE}/gravixlayer${EXT}' -DestinationPath '${DIST_DIR}/${ARCHIVE}' -Force"
-            fi
-          else
-            ARCHIVE="gravixlayer-${TAG}-${TARGET}.tar.gz"
-            tar -C "$STAGE" -czf "${DIST_DIR}/${ARCHIVE}" gravixlayer
-          fi
-
+          STAGE="$(mktemp -d)"
+          cp "$BIN_SRC" "${STAGE}/gravixlayer"
+          chmod +x "${STAGE}/gravixlayer"
+          ARCHIVE="gravixlayer-${TAG}-${TARGET}.tar.gz"
+          tar -C "$STAGE" -czf "dist/${ARCHIVE}" gravixlayer
           if command -v sha256sum >/dev/null 2>&1; then
-            (cd "$DIST_DIR" && sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256")
+            (cd dist && sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256")
           else
-            (cd "$DIST_DIR" && shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256")
+            (cd dist && shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256")
           fi
-          ls -la "$DIST_DIR"
           rm -rf "$STAGE"
+          ls -la dist/
+
+      # Windows packaging must use native PowerShell paths (Git Bash paths break Compress-Archive).
+      - name: Package Windows archive + checksum
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ needs.tag-check.outputs.tag }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Path dist -Force | Out-Null
+          $binSrc = Join-Path "target/$env:TARGET/release" "gravixlayer.exe"
+          if (-not (Test-Path $binSrc)) { throw "Missing binary: $binSrc" }
+
+          $stage = Join-Path $env:RUNNER_TEMP "glpack-$env:TARGET"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item $binSrc (Join-Path $stage "gravixlayer.exe") -Force
+
+          $archive = "gravixlayer-$($env:TAG)-$($env:TARGET).zip"
+          $distFull = (Resolve-Path dist).Path
+          $archivePath = Join-Path $distFull $archive
+          Compress-Archive -Path (Join-Path $stage "gravixlayer.exe") -DestinationPath $archivePath -Force
+
+          $hash = (Get-FileHash -Path $archivePath -Algorithm SHA256).Hash.ToLower()
+          Set-Content -Path "$archivePath.sha256" -Value "$hash  $archive" -NoNewline
+          Get-ChildItem dist
+          Remove-Item -Recurse -Force $stage
 
       - uses: actions/upload-artifact@v4
         with:
@@ -171,19 +179,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p dist
-          cp artifacts/* dist/ || true
-          # Flatten if download kept nested dirs
           find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) -exec cp {} dist/ \;
           cp scripts/install.sh dist/install.sh
           cp scripts/install.ps1 dist/install.ps1
           (
             cd dist
-            # Aggregate checksums for all archives (exclude .sha256 side-cars themselves)
             : > SHA256SUMS
             for f in *.tar.gz *.zip; do
               [ -f "$f" ] || continue
               if [ -f "${f}.sha256" ]; then
                 cat "${f}.sha256" >> SHA256SUMS
+                printf '\n' >> SHA256SUMS
               else
                 sha256sum "$f" >> SHA256SUMS
               fi
