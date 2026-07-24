@@ -1,0 +1,13 @@
+{
+  "name": "{{agent_name_kebab}}",
+  "description": "{{description}}",
+  "framework": "{{framework}}",
+  "entrypoint": {{entrypoint_json}},
+  "start_command": {{start_command_json}},
+  "python_version": "{{python_version}}",
+  "port": {{http_port}},
+  "protocols": {{protocols_json}},
+  "is_public": false,
+  "env": {},
+  "exclude": [".venv", "__pycache__", ".pytest_cache", ".ruff_cache"]
+}

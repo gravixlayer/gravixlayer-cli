@@ -1,0 +1,31 @@
+# GravixLayer CLI build outputs
+.gravixlayer/
+*.tar.gz
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+dist/
+build/
+*.egg-info/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets (never commit)
+gravixlayer/.env.local
+gravixlayer/state.json

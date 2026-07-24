@@ -1,0 +1,17 @@
+[project]
+name = "{{agent_name_kebab}}"
+version = "0.1.0"
+requires-python = ">={{python_version}}"
+dependencies = [
+    "strands-agents>=1.0",
+    "strands-agents-tools>=0.2",
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]

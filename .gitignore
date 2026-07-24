@@ -1,0 +1,26 @@
+# Build
+/target/
+
+# Local secrets / env
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Accidental tooling caches (this is a Rust crate)
+.pytest_cache/
+__pycache__/
+*.pyc
+
+# Coverage / profiling
+*.profraw
+lcov.info
+coverage/

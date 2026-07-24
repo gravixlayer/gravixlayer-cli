@@ -1,0 +1,4 @@
+# Local environment variables — never commit this file.
+# Keys defined here are injected into the runtime automatically.
+
+{{api_key_env}}=your-api-key-here

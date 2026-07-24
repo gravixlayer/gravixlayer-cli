@@ -1,0 +1,136 @@
+[package]
+name        = "gravixlayer"
+version     = "0.1.0"
+edition     = "2021"
+authors     = ["GravixLayer <support@gravixlayer.ai>"]
+description = "Official CLI for the GravixLayer AI agent platform"
+homepage    = "https://gravixlayer.ai"
+repository  = "https://github.com/gravixlayer/gravixlayer-cli"
+license     = "Apache-2.0"
+readme      = "README.md"
+keywords    = ["ai", "agents", "cli", "gravixlayer", "ml"]
+categories  = ["command-line-utilities"]
+
+[[bin]]
+name = "gravixlayer"
+path = "src/main.rs"
+
+[dependencies]
+# --- Async runtime ---
+tokio        = { version = "1", features = ["full"] }
+futures      = "0.3"
+
+# --- A2A protocol server ---
+a2a          = { package = "a2a-lf", version = "0.2.4" }
+a2a-server   = { package = "a2a-server-lf", version = "0.2.7" }
+axum         = { version = "0.8", features = ["macros"] }
+
+# --- HTTP client (rustls only — no OpenSSL dep, allows static musl builds) ---
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "json",
+    "multipart",
+    "stream",
+] }
+
+# rustls 0.23 needs an explicit process-wide CryptoProvider when the dep tree
+# enables both aws-lc-rs and ring (reqwest + tokio-tungstenite). Install aws-lc-rs
+# in main before any TLS (HTTPS + WebSocket shell).
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "aws-lc-rs"] }
+
+# --- CLI arg parsing ---
+clap        = { version = "4", features = ["derive", "env", "wrap_help"] }
+clap_complete = "4"
+
+# --- Serialization ---
+serde       = { version = "1", features = ["derive"] }
+serde_json  = "1"
+toml        = "0.8"
+
+# --- Error handling ---
+thiserror   = "2"
+anyhow      = "1"
+
+# --- Crypto / secrets ---
+secrecy     = { version = "0.10", features = ["serde"] }
+zeroize     = { version = "1", features = ["derive"] }
+
+# --- OS keyring ---
+keyring     = { version = "3", features = ["apple-native", "windows-native", "linux-native"] }
+
+# --- Directory helpers ---
+dirs        = "5"
+
+# --- Random (retry jitter) ---
+rand        = "0.9"
+
+# --- Terminal / PTY ---
+crossterm   = { version = "0.28", features = ["event-stream"] }
+
+# --- WebSocket ---
+tokio-tungstenite = { version = "0.26", default-features = false, features = [
+    "rustls-tls-native-roots",
+    "connect",
+] }
+
+# --- Output / tables ---
+comfy-table = "7"
+indicatif   = "0.17"
+
+# --- Logging / tracing ---
+tracing                = "0.1"
+tracing-subscriber     = { version = "0.3", features = ["env-filter", "json"] }
+
+# --- File archiving ---
+flate2      = "1"
+tar         = "0.4"
+walkdir     = "2"
+
+# --- Miscellaneous ---
+url         = "2"
+humantime   = "2"
+chrono      = { version = "0.4", features = ["serde"] }
+uuid        = { version = "1", features = ["serde"] }
+futures-util = { version = "0.3", default-features = false, features = ["alloc", "sink"] }
+bytes        = "1"
+rpassword    = "7"
+shell-words  = "1"
+
+# --- Interactive wizard ---
+dialoguer    = { version = "0.11", features = ["fuzzy-select"] }
+console      = "0.15"
+
+# --- File watcher (agent dev hot-reload) ---
+notify       = { version = "7", default-features = false, features = ["macos_kqueue", "crossbeam-channel"] }
+
+# --- Self-update ---
+self_update  = { version = "0.41", default-features = false, features = ["rustls"] }
+
+# --- Number formatting ---
+bytesize     = "1"
+
+[dev-dependencies]
+httpmock     = "0.7"
+assert_cmd   = "2"
+predicates   = "3"
+tempfile     = "3"
+tokio        = { version = "1", features = ["full", "test-util"] }
+
+# Pre-existing style debt: keep CI green with -D warnings without a mass refactor.
+# Prefer fixing these incrementally; do not expand this list casually.
+[lints.clippy]
+field_reassign_with_default = "allow"
+io_other_error = "allow"
+large_enum_variant = "allow"
+manual_clamp = "allow"
+manual_range_patterns = "allow"
+needless_borrows_for_generic_args = "allow"
+question_mark = "allow"
+redundant_closure = "allow"
+
+[profile.release]
+opt-level     = 3
+lto           = "thin"
+codegen-units = 1
+strip         = "symbols"
+panic         = "abort"

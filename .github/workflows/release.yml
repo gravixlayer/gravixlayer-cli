@@ -1,0 +1,204 @@
+# Tag-driven release pipeline (Codex-shaped, day-one scope).
+#
+# Trigger: push a version tag matching vX.Y.Z or vX.Y.Z-alpha.N
+#   git tag -a v0.1.0 -m "Release 0.1.0"
+#   git push origin v0.1.0
+#
+# Produces GitHub Release assets expected by scripts/install.sh:
+#   gravixlayer-<tag>-<rust-triple>.tar.gz
+#   gravixlayer-<tag>-<rust-triple>.tar.gz.sha256
+#   SHA256SUMS
+#   install.sh / install.ps1
+#
+# Skipped on day one (intentionally): Cosign, macOS notarization, npm, Bazel, CDN.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-alpha.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-beta.[0-9]+"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tag-check:
+    name: Tag matches Cargo.toml
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      prerelease: ${{ steps.meta.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate tag vs Cargo.toml
+        id: meta
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          CARGO_VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          if [ "$VERSION" != "$CARGO_VERSION" ]; then
+            echo "::error::Tag version '$VERSION' does not match Cargo.toml version '$CARGO_VERSION'"
+            exit 1
+          fi
+          PRERELEASE=false
+          case "$VERSION" in
+            *-*) PRERELEASE=true ;;
+          esac
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "Validated tag=$TAG cargo=$CARGO_VERSION prerelease=$PRERELEASE"
+
+  build:
+    name: Build (${{ matrix.target }})
+    needs: tag-check
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            use_cross: true
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            use_cross: false
+          - target: x86_64-apple-darwin
+            os: macos-latest
+            use_cross: false
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+          - target: aarch64-pc-windows-msvc
+            os: windows-latest
+            use_cross: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.use_cross
+        run: cargo install cross --git https://github.com/cross-rs/cross --locked
+
+      - name: Build (cross)
+        if: matrix.use_cross
+        run: cross build --release --locked --target ${{ matrix.target }}
+
+      - name: Build (native)
+        if: ${{ !matrix.use_cross }}
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package archive + checksum
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          TAG: ${{ needs.tag-check.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          BIN_SRC="target/${TARGET}/release/gravixlayer"
+          EXT=""
+          if [[ "$TARGET" == *windows* ]]; then
+            BIN_SRC="${BIN_SRC}.exe"
+            EXT=".exe"
+          fi
+          test -f "$BIN_SRC"
+
+          STAGE="$(mktemp -d 2>/dev/null || mktemp -d -t glpack)"
+          DIST_DIR="$(pwd)/dist"
+          mkdir -p "$DIST_DIR"
+          cp "$BIN_SRC" "${STAGE}/gravixlayer${EXT}"
+          if [[ -z "$EXT" ]]; then
+            chmod +x "${STAGE}/gravixlayer"
+          fi
+
+          if [[ "$TARGET" == *windows* ]]; then
+            ARCHIVE="gravixlayer-${TAG}-${TARGET}.zip"
+            if command -v zip >/dev/null 2>&1; then
+              (cd "$STAGE" && zip -q "${DIST_DIR}/${ARCHIVE}" "gravixlayer${EXT}")
+            else
+              powershell.exe -NoProfile -Command \
+                "Compress-Archive -Path '${STAGE}/gravixlayer${EXT}' -DestinationPath '${DIST_DIR}/${ARCHIVE}' -Force"
+            fi
+          else
+            ARCHIVE="gravixlayer-${TAG}-${TARGET}.tar.gz"
+            tar -C "$STAGE" -czf "${DIST_DIR}/${ARCHIVE}" gravixlayer
+          fi
+
+          if command -v sha256sum >/dev/null 2>&1; then
+            (cd "$DIST_DIR" && sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256")
+          else
+            (cd "$DIST_DIR" && shasum -a 256 "${ARCHIVE}" > "${ARCHIVE}.sha256")
+          fi
+          ls -la "$DIST_DIR"
+          rm -rf "$STAGE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Release
+    needs: [tag-check, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: release-*
+          merge-multiple: true
+
+      - name: Assemble dist/
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp artifacts/* dist/ || true
+          # Flatten if download kept nested dirs
+          find artifacts -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.sha256' \) -exec cp {} dist/ \;
+          cp scripts/install.sh dist/install.sh
+          cp scripts/install.ps1 dist/install.ps1
+          (
+            cd dist
+            # Aggregate checksums for all archives (exclude .sha256 side-cars themselves)
+            : > SHA256SUMS
+            for f in *.tar.gz *.zip; do
+              [ -f "$f" ] || continue
+              if [ -f "${f}.sha256" ]; then
+                cat "${f}.sha256" >> SHA256SUMS
+              else
+                sha256sum "$f" >> SHA256SUMS
+              fi
+            done
+          )
+          ls -la dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.tag-check.outputs.tag }}
+          name: ${{ needs.tag-check.outputs.version }}
+          prerelease: ${{ needs.tag-check.outputs.prerelease == 'true' }}
+          generate_release_notes: true
+          files: dist/**
+          fail_on_unmatched_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

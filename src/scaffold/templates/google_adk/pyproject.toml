@@ -1,0 +1,13 @@
+[project]
+name = "{{agent_name_kebab}}"
+version = "0.1.0"
+requires-python = ">={{python_version}}"
+dependencies = [
+    "google-adk>=1.0.0",
+]
+
+[tool.uv]
+dev-dependencies = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+]
