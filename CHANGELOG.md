@@ -11,15 +11,23 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-07-31
+
+### Fixed
+
+- POSIX `install.sh` (`curl|sh`), default install to `~/.local/bin`, and PATH via shell profiles
+- Native self-update path (no vulnerable `self_update` / `quick-xml` dependency)
+- Runtime git: required `--path`, clone default under `/workspace/<repo>`, non-zero exit for CI, per-operation `--auth-token` / `GRAVIXLAYER_GIT_TOKEN`
+
 ### Added
 
+- `scripts/release.sh` and `scripts/set-version.sh` for one-command releases
 - Tag-driven GitHub Actions release pipeline (`release.yml`)
 - Fail-closed SHA-256 verification in `install.sh` / `install.ps1`
 - `gravixlayer doctor` for local install/auth diagnostics
 - Template `snapshot` command and `kind` / `project_id` list filters
 - Billing `summary --month` / `--project_id` and expanded history filters
 - API response field parity with the Python SDK and public API
-  (runtime aliases, build `template_id` / `progress_percent` / `error`, template resource fields)
 
 ## [0.1.0] - TBD
 
