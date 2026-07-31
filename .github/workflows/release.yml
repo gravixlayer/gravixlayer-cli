@@ -1,15 +1,12 @@
 # Tag-driven release pipeline.
 #
-# Trigger: push a version tag matching vX.Y.Z or vX.Y.Z-alpha.N
-#   git tag -a v0.1.0 -m "Release 0.1.0"
-#   git push origin v0.1.0
+# Trigger: push a version tag (vX.Y.Z / vX.Y.Z-alpha.N / vX.Y.Z-beta.N)
+# Prefer: ./scripts/release.sh X.Y.Z  (bumps Cargo.toml + Cargo.lock, commits, tags)
 #
-# Produces GitHub Release assets expected by scripts/install.sh / install.ps1:
+# Produces GitHub Release assets for scripts/install.sh / install.ps1:
 #   gravixlayer-<tag>-<rust-triple>.tar.gz   (Unix)
 #   gravixlayer-<tag>-<rust-triple>.zip      (Windows)
-#   + matching .sha256 side-cars, SHA256SUMS, install.sh, install.ps1
-#
-# Not included in this release: Cosign, macOS notarization, npm, Bazel, binary CDN.
+#   + .sha256 side-cars, SHA256SUMS, install.sh, install.ps1
 
 name: Release
 
@@ -28,7 +25,7 @@ env:
 
 jobs:
   tag-check:
-    name: Tag matches Cargo.toml
+    name: Tag matches Cargo.toml + lockfile
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
@@ -36,17 +33,37 @@ jobs:
       prerelease: ${{ steps.meta.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
-      - name: Validate tag vs Cargo.toml
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Validate tag vs Cargo.toml and Cargo.lock
         id: meta
         run: |
           set -euo pipefail
           TAG="${GITHUB_REF_NAME}"
           VERSION="${TAG#v}"
-          CARGO_VERSION="$(sed -n 's/^version *= *"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          PKG_NAME="$(sed -n 's/^name[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          CARGO_VERSION="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -1)"
+          LOCK_VERSION="$(awk -v name="$PKG_NAME" '
+            $0 == "name = \"" name "\"" { want=1; next }
+            want && /^version = "/ {
+              sub(/^version = "/, "")
+              sub(/"$/, "")
+              print
+              exit
+            }
+          ' Cargo.lock)"
+
           if [ "$VERSION" != "$CARGO_VERSION" ]; then
-            echo "::error::Tag version '$VERSION' does not match Cargo.toml version '$CARGO_VERSION'"
+            echo "::error::Tag '$VERSION' != Cargo.toml '$CARGO_VERSION'. Run ./scripts/release.sh $VERSION"
             exit 1
           fi
+          if [ "$VERSION" != "$LOCK_VERSION" ]; then
+            echo "::error::Tag '$VERSION' != Cargo.lock package '$LOCK_VERSION'. Run ./scripts/set-version.sh $VERSION and commit Cargo.lock"
+            exit 1
+          fi
+
+          # Fail before matrix builds if --locked would need a lockfile rewrite.
+          cargo metadata --format-version 1 --locked >/dev/null
+
           PRERELEASE=false
           case "$VERSION" in
             *-*) PRERELEASE=true ;;
@@ -56,7 +73,7 @@ jobs:
             echo "version=$VERSION"
             echo "prerelease=$PRERELEASE"
           } >> "$GITHUB_OUTPUT"
-          echo "Validated tag=$TAG cargo=$CARGO_VERSION prerelease=$PRERELEASE"
+          echo "Validated tag=$TAG cargo=$CARGO_VERSION lock=$LOCK_VERSION prerelease=$PRERELEASE"
 
   build:
     name: Build (${{ matrix.target }})
@@ -105,7 +122,6 @@ jobs:
         if: ${{ !matrix.use_cross }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
-      # Unix packaging must stay on bash; do not call PowerShell with Git Bash paths.
       - name: Package Unix archive + checksum
         if: runner.os != 'Windows'
         shell: bash
@@ -130,7 +146,6 @@ jobs:
           rm -rf "$STAGE"
           ls -la dist/
 
-      # Windows packaging must use native PowerShell paths (Git Bash paths break Compress-Archive).
       - name: Package Windows archive + checksum
         if: runner.os == 'Windows'
         shell: pwsh
@@ -196,6 +211,8 @@ jobs:
             done
           )
           ls -la dist/
+          # Every matrix target must have produced an archive.
+          test "$(find dist -name 'gravixlayer-*.tar.gz' -o -name 'gravixlayer-*.zip' | wc -l | tr -d ' ')" -eq 6
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

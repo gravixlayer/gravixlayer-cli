@@ -1,8 +1,11 @@
 #!/bin/sh
-# Bump Cargo.toml, commit, tag, and push a release.
+# Bump version, commit, tag, and push a release.
+#
 # Usage:
-#   1. Edit CHANGELOG.md for the new version
-#   2. ./scripts/release.sh 0.1.1
+#   1. Edit CHANGELOG.md — add ## [X.Y.Z] - YYYY-MM-DD
+#   2. ./scripts/release.sh X.Y.Z
+#
+# Everyday commits do NOT use this script — only when shipping binaries.
 set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)"
@@ -16,11 +19,14 @@ fi
 
 TAG="v${VER}"
 
-# Allow CHANGELOG + these scripts to already be edited; refuse any other dirt.
+# Allow release-related files to already be edited; refuse any other dirt.
 DIRTY="$(git status --porcelain | awk '
   $2 == "CHANGELOG.md" { next }
+  $2 == "Cargo.toml" { next }
+  $2 == "Cargo.lock" { next }
   $2 == "scripts/release.sh" { next }
   $2 == "scripts/set-version.sh" { next }
+  $2 == ".github/workflows/release.yml" { next }
   { print }
 ')"
 if [ -n "$DIRTY" ]; then
@@ -35,34 +41,49 @@ if ! grep -q "\[${VER}\]" CHANGELOG.md 2>/dev/null; then
   exit 1
 fi
 
-# Drop a bad same-version tag if a previous attempt left one on this machine.
+# Drop a bad same-version tag from a previous failed attempt.
 if git rev-parse "$TAG" >/dev/null 2>&1; then
-  echo "Removing local tag $TAG from a previous attempt..."
+  echo "Removing local tag $TAG..."
   git tag -d "$TAG" >/dev/null
 fi
 if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
-  echo "Removing remote tag $TAG from a previous attempt..."
+  echo "Removing remote tag $TAG..."
   git push origin ":refs/tags/${TAG}"
 fi
 
 ./scripts/set-version.sh "$VER"
 
-git add Cargo.toml Cargo.lock CHANGELOG.md scripts/set-version.sh scripts/release.sh
+git add Cargo.toml Cargo.lock CHANGELOG.md \
+  scripts/set-version.sh scripts/release.sh \
+  .github/workflows/release.yml
 git add -u
 
-if ! git diff --cached --name-only | grep -q '^Cargo.toml$'; then
-  echo "ERROR: Cargo.toml is not staged — version bump did not take. Aborting." >&2
+if ! git diff --cached --name-only | grep -qx 'Cargo.lock'; then
+  echo "ERROR: Cargo.lock is not staged — lockfile was not synced. Aborting." >&2
   exit 1
 fi
+# Cargo.toml may already be at the target version from a previous attempt;
+# Cargo.lock sync is the critical gate for --locked CI builds.
 
 git commit -m "chore: release ${VER}"
 git push origin HEAD
 
+# Final gate — same checks Release CI runs before building.
 ACTUAL="$(sed -n 's/^version[[:space:]]*=[[:space:]]*"\(.*\)"/\1/p' Cargo.toml | head -1)"
-if [ "$ACTUAL" != "$VER" ]; then
-  echo "ERROR: refusing to tag — Cargo.toml is '$ACTUAL', expected '$VER'" >&2
+LOCK_VER="$(awk '
+  /^name = "gravixlayer"$/ { want=1; next }
+  want && /^version = "/ {
+    gsub(/^version = "/, "")
+    gsub(/"$/, "")
+    print
+    exit
+  }
+' Cargo.lock)"
+if [ "$ACTUAL" != "$VER" ] || [ "$LOCK_VER" != "$VER" ]; then
+  echo "ERROR: refusing to tag — Cargo.toml=$ACTUAL Cargo.lock=$LOCK_VER expected=$VER" >&2
   exit 1
 fi
+cargo metadata --format-version 1 --locked >/dev/null
 
 git tag -a "$TAG" -m "Release ${VER}"
 git push origin "$TAG"
