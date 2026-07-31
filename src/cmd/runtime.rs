@@ -925,6 +925,36 @@ async fn git(ctx: &AppContext, cmd: RuntimeGitCommand) -> anyhow::Result<()> {
     }
 }
 
+/// Working directory of a runtime: the sandbox user's home, and where commands
+/// run by default, so it is where a clone belongs when no destination is given.
+const RUNTIME_WORKSPACE_DIR: &str = "/workspace";
+
+/// Whether the git invocation itself failed.
+///
+/// `exit_code` is authoritative when the API sends one; `success` covers a
+/// response that omits it. A response carrying neither is treated as a success
+/// so a missing field can never turn into a spurious pipeline failure.
+fn git_failed(result: &crate::api::runtime_git::GitOperationResult) -> bool {
+    match (result.exit_code, result.success) {
+        (Some(code), _) => code != 0,
+        (None, Some(ok)) => !ok,
+        (None, None) => false,
+    }
+}
+
+/// Exit code to report for a git operation that ran and failed.
+///
+/// Git's own exit code passes through so a script can branch on it exactly as
+/// it would running git locally. A negative code means the process was killed
+/// by a signal rather than exiting; that has no meaningful code to forward, so
+/// it collapses to 1.
+fn git_exit_code(result: &crate::api::runtime_git::GitOperationResult) -> i32 {
+    match result.exit_code {
+        Some(code) if code > 0 => code,
+        _ => 1,
+    }
+}
+
 fn print_git_result(ctx: &AppContext, result: &crate::api::runtime_git::GitOperationResult) {
     output::print_or_json(ctx.output, result, || {
         if let Some(ref out) = result.stdout {
@@ -942,15 +972,51 @@ fn print_git_result(ctx: &AppContext, result: &crate::api::runtime_git::GitOpera
                 eprint!("error: {api_err}");
             }
         }
-        if result.success.unwrap_or(false) {
-            if let Some(ref msg) = result.message {
-                output::success(ctx.output, msg);
-            }
-        } else {
+        if git_failed(result) {
             let code = result.exit_code.unwrap_or(-1);
             output::warn(format!("git exited with code {code}"));
         }
     });
+}
+
+/// Print the result, then leave the process with git's own status.
+///
+/// A failed git command has to fail the CLI too, otherwise `git clone && make`
+/// in a pipeline runs `make` against a checkout that was never created. This
+/// matches how `runtime exec` forwards a remote command's exit code.
+fn finish_git(
+    ctx: &AppContext,
+    result: &crate::api::runtime_git::GitOperationResult,
+) -> anyhow::Result<()> {
+    print_git_result(ctx, result);
+    if git_failed(result) {
+        // Git's output does not always end in a newline, and stdout is
+        // line-buffered, so the tail of a diagnostic can still be sitting in the
+        // buffer here. `exit` does not unwind and would drop it — precisely on
+        // the path where the message matters most.
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
+        std::process::exit(git_exit_code(result));
+    }
+    Ok(())
+}
+
+/// Directory `git clone` would create for `url`, without a destination given.
+///
+/// Same rule as git: drop a trailing slash and a `.git` suffix, then take the
+/// last path segment — `https://host/org/repo.git`, `git@host:org/repo.git`,
+/// and `ssh://git@host/org/repo/` all yield `repo`. Returns `None` when nothing
+/// usable is left, so the caller can ask for `--target-dir` instead of guessing.
+fn repository_directory_name(url: &str) -> Option<&str> {
+    let trimmed = url.trim_end_matches('/');
+    let trimmed = trimmed.strip_suffix(".git").unwrap_or(trimmed);
+    let name = trimmed.rsplit(['/', ':']).next()?;
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 async fn git_clone(ctx: &AppContext, args: RuntimeGitCloneArgs) -> anyhow::Result<()> {
@@ -959,40 +1025,49 @@ async fn git_clone(ctx: &AppContext, args: RuntimeGitCloneArgs) -> anyhow::Resul
     if args.repo_url.starts_with("file://") {
         anyhow::bail!("file:// URLs are not supported; only remote git URLs are allowed");
     }
+    let target = match args.target_dir.clone() {
+        Some(dir) => dir,
+        None => {
+            let name = repository_directory_name(&args.repo_url).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "cannot derive a directory name from {}; pass --target-dir",
+                    args.repo_url
+                )
+            })?;
+            format!("{RUNTIME_WORKSPACE_DIR}/{name}")
+        }
+    };
     let spinner = output::Spinner::new(format!("Cloning {} …", args.repo_url));
-    let target = args.target_dir.as_deref().unwrap_or("/");
     let result = ctx
         .api
         .runtime_git()
         .clone(
             &args.runtime_id,
             &args.repo_url,
-            target,
+            &target,
             args.branch.as_deref(),
             args.depth,
             args.auth_token.as_deref(),
         )
         .await?;
     drop(spinner);
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_pull(ctx: &AppContext, args: RuntimeGitPullArgs) -> anyhow::Result<()> {
     super::validate_resource_id(&args.runtime_id, "runtime")?;
-    let path = args.workdir.as_deref().unwrap_or("/");
     let result = ctx
         .api
         .runtime_git()
         .pull(
             &args.runtime_id,
-            path,
+            &args.path,
             args.remote.as_deref(),
             args.branch.as_deref(),
+            args.auth_token.as_deref(),
         )
         .await?;
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_status(ctx: &AppContext, args: RuntimeGitStatusArgs) -> anyhow::Result<()> {
@@ -1002,8 +1077,7 @@ async fn git_status(ctx: &AppContext, args: RuntimeGitStatusArgs) -> anyhow::Res
         .runtime_git()
         .status(&args.runtime_id, &args.path)
         .await?;
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_branch(ctx: &AppContext, args: RuntimeGitBranchArgs) -> anyhow::Result<()> {
@@ -1020,17 +1094,9 @@ async fn git_branch(ctx: &AppContext, args: RuntimeGitBranchArgs) -> anyhow::Res
         .runtime_git()
         .branches(&args.runtime_id, &args.path, scope)
         .await?;
-    output::print_or_json(ctx.output, &result, || {
-        if let Some(ref branches) = result.branches {
-            for b in branches {
-                let current = result.branch.as_deref() == Some(b.as_str());
-                println!("{} {b}", if current { "*" } else { " " });
-            }
-        } else if let Some(ref out) = result.stdout {
-            print!("{out}");
-        }
-    });
-    Ok(())
+    // `git branch` already marks the current branch with `*`, so its output is
+    // printed as-is rather than re-rendered.
+    finish_git(ctx, &result)
 }
 
 async fn git_checkout(ctx: &AppContext, args: RuntimeGitCheckoutArgs) -> anyhow::Result<()> {
@@ -1040,8 +1106,7 @@ async fn git_checkout(ctx: &AppContext, args: RuntimeGitCheckoutArgs) -> anyhow:
         .runtime_git()
         .checkout(&args.runtime_id, &args.path, &args.branch)
         .await?;
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_fetch(ctx: &AppContext, args: RuntimeGitFetchArgs) -> anyhow::Result<()> {
@@ -1049,10 +1114,14 @@ async fn git_fetch(ctx: &AppContext, args: RuntimeGitFetchArgs) -> anyhow::Resul
     let result = ctx
         .api
         .runtime_git()
-        .fetch(&args.runtime_id, &args.path, args.remote.as_deref())
+        .fetch(
+            &args.runtime_id,
+            &args.path,
+            args.remote.as_deref(),
+            args.auth_token.as_deref(),
+        )
         .await?;
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_add(ctx: &AppContext, args: RuntimeGitAddArgs) -> anyhow::Result<()> {
@@ -1062,8 +1131,7 @@ async fn git_add(ctx: &AppContext, args: RuntimeGitAddArgs) -> anyhow::Result<()
         .runtime_git()
         .add(&args.runtime_id, &args.path, &args.files)
         .await?;
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_commit(ctx: &AppContext, args: RuntimeGitCommitArgs) -> anyhow::Result<()> {
@@ -1080,8 +1148,7 @@ async fn git_commit(ctx: &AppContext, args: RuntimeGitCommitArgs) -> anyhow::Res
             args.allow_empty,
         )
         .await?;
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_push(ctx: &AppContext, args: RuntimeGitPushArgs) -> anyhow::Result<()> {
@@ -1097,11 +1164,11 @@ async fn git_push(ctx: &AppContext, args: RuntimeGitPushArgs) -> anyhow::Result<
             args.refspec.as_deref(),
             args.username.as_deref(),
             args.password.as_deref(),
+            args.auth_token.as_deref(),
         )
         .await?;
     drop(spinner);
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_branch_create(
@@ -1119,8 +1186,7 @@ async fn git_branch_create(
             args.start_point.as_deref(),
         )
         .await?;
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 async fn git_branch_delete(
@@ -1133,8 +1199,7 @@ async fn git_branch_delete(
         .runtime_git()
         .delete_branch(&args.runtime_id, &args.path, &args.branch_name, args.force)
         .await?;
-    print_git_result(ctx, &result);
-    Ok(())
+    finish_git(ctx, &result)
 }
 
 // ---------------------------------------------------------------------------
@@ -1220,4 +1285,70 @@ fn parse_file_mappings(pairs: &[String]) -> anyhow::Result<Vec<(std::path::PathB
             Ok((std::path::PathBuf::from(local), remote.to_string()))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{git_exit_code, git_failed, repository_directory_name};
+    use crate::api::runtime_git::GitOperationResult;
+
+    fn result(exit_code: Option<i32>, success: Option<bool>) -> GitOperationResult {
+        GitOperationResult {
+            success,
+            stdout: None,
+            stderr: None,
+            error: None,
+            exit_code,
+        }
+    }
+
+    #[test]
+    fn clone_destination_matches_what_git_would_choose() {
+        for (url, expected) in [
+            ("https://github.com/foo/bar.git", "bar"),
+            ("https://github.com/foo/bar", "bar"),
+            ("https://github.com/foo/bar/", "bar"),
+            ("git@github.com:foo/bar.git", "bar"),
+            ("ssh://git@github.com/foo/bar.git", "bar"),
+            ("git://host/bar.git", "bar"),
+        ] {
+            assert_eq!(repository_directory_name(url), Some(expected), "{url}");
+        }
+    }
+
+    #[test]
+    fn clone_destination_declines_rather_than_guessing() {
+        // Nothing left to name the directory after; the caller asks for
+        // --target-dir instead of inventing one.
+        for url in ["", "/", "https://host/.git"] {
+            assert_eq!(repository_directory_name(url), None, "{url:?}");
+        }
+    }
+
+    #[test]
+    fn nonzero_exit_code_is_a_failure() {
+        assert!(git_failed(&result(Some(1), Some(true))));
+        assert!(git_failed(&result(Some(128), None)));
+        assert!(!git_failed(&result(Some(0), None)));
+    }
+
+    #[test]
+    fn success_flag_decides_when_no_exit_code() {
+        assert!(git_failed(&result(None, Some(false))));
+        assert!(!git_failed(&result(None, Some(true))));
+    }
+
+    #[test]
+    fn a_response_with_neither_field_is_not_a_failure() {
+        // A missing field must never fail a pipeline on its own.
+        assert!(!git_failed(&result(None, None)));
+    }
+
+    #[test]
+    fn git_exit_code_passes_through_and_normalizes_signals() {
+        assert_eq!(git_exit_code(&result(Some(128), None)), 128);
+        // A signalled process reports -1, which carries no usable status.
+        assert_eq!(git_exit_code(&result(Some(-1), None)), 1);
+        assert_eq!(git_exit_code(&result(None, Some(false))), 1);
+    }
 }

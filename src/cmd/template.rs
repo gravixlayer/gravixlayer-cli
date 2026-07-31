@@ -75,8 +75,8 @@ async fn snapshot(ctx: &AppContext, args: TemplateGetArgs) -> anyhow::Result<()>
         if let Some(mem) = snap.memory_mb {
             output::kv(ctx.output, "memory_mb", &mem.to_string());
         }
-        if let Some(ref envd) = snap.envd_version {
-            output::kv(ctx.output, "envd_version", envd);
+        if let Some(ref version) = snap.cellcore_version {
+            output::kv(ctx.output, "cellcore_version", version);
         }
         if let Some(size) = snap.snapshot_size_bytes {
             output::kv(ctx.output, "snapshot_size_bytes", &size.to_string());

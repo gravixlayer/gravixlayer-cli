@@ -7,6 +7,12 @@ use super::ApiClient;
 // Response types
 // ---------------------------------------------------------------------------
 
+/// Outcome of one git invocation in the runtime.
+///
+/// Mirrors the API's git response exactly: the fields are what `git(1)` itself
+/// produced, not a parsed interpretation of it. Callers that want structured
+/// data (a branch list, a commit hash) read it out of `stdout`, which is the
+/// porcelain output of the corresponding git command.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct GitOperationResult {
     pub success: Option<bool>,
@@ -18,10 +24,6 @@ pub struct GitOperationResult {
     /// Structural error message from the backend (JSON key: `error`).
     pub error: Option<String>,
     pub exit_code: Option<i32>,
-    pub branch: Option<String>,
-    pub branches: Option<Vec<String>>,
-    pub commit_hash: Option<String>,
-    pub message: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -64,6 +66,9 @@ impl<'a> RuntimeGitApi<'a> {
     }
 
     /// Clone a repository into the runtime.
+    ///
+    /// `auth_token` authenticates this clone only; it is not stored in the
+    /// checkout, so `pull`, `fetch`, and `push` each take their own token.
     pub async fn clone(
         &self,
         runtime_id: &str,
@@ -117,13 +122,14 @@ impl<'a> RuntimeGitApi<'a> {
         self.post_json(runtime_id, "checkout", body).await
     }
 
-    /// Pull from remote.
+    /// Pull from remote. `auth_token` authenticates this operation only.
     pub async fn pull(
         &self,
         runtime_id: &str,
         path: &str,
         remote: Option<&str>,
         branch: Option<&str>,
+        auth_token: Option<&str>,
     ) -> Result<GitOperationResult> {
         let mut body = serde_json::json!({ "repository_path": path });
         if let Some(r) = remote {
@@ -132,10 +138,14 @@ impl<'a> RuntimeGitApi<'a> {
         if let Some(b) = branch {
             body["branch"] = b.into();
         }
+        if let Some(t) = auth_token {
+            body["auth_token"] = t.into();
+        }
         self.post_json(runtime_id, "pull", body).await
     }
 
-    /// Push to remote.
+    /// Push to remote. `auth_token` takes precedence over `username`/`password`.
+    #[allow(clippy::too_many_arguments)]
     pub async fn push(
         &self,
         runtime_id: &str,
@@ -144,6 +154,7 @@ impl<'a> RuntimeGitApi<'a> {
         refspec: Option<&str>,
         username: Option<&str>,
         password: Option<&str>,
+        auth_token: Option<&str>,
     ) -> Result<GitOperationResult> {
         let mut body = serde_json::json!({ "repository_path": path });
         if let Some(r) = remote {
@@ -158,19 +169,26 @@ impl<'a> RuntimeGitApi<'a> {
         if let Some(p) = password {
             body["password"] = p.into();
         }
+        if let Some(t) = auth_token {
+            body["auth_token"] = t.into();
+        }
         self.post_json(runtime_id, "push", body).await
     }
 
-    /// Fetch from remote.
+    /// Fetch from remote. `auth_token` authenticates this operation only.
     pub async fn fetch(
         &self,
         runtime_id: &str,
         path: &str,
         remote: Option<&str>,
+        auth_token: Option<&str>,
     ) -> Result<GitOperationResult> {
         let mut body = serde_json::json!({ "repository_path": path });
         if let Some(r) = remote {
             body["remote"] = r.into();
+        }
+        if let Some(t) = auth_token {
+            body["auth_token"] = t.into();
         }
         self.post_json(runtime_id, "fetch", body).await
     }

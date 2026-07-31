@@ -296,32 +296,62 @@ Add the corresponding match arm in the wizard and the model provider matrix.
 
 ## Release Process
 
-Tag-driven release pipeline (no cargo-dist, Cosign, or npm yet).
+Tag-driven releases. Version lives in **one place**: `Cargo.toml` `[package].version`.
+Git tags are `v` + that version. The release workflow fails if they disagree.
 
-| Item | Convention |
-|---|---|
-| First public version | `0.1.0` (tag `v0.1.0`) |
-| Pre-releases | `X.Y.Z-alpha.N` (tag `vX.Y.Z-alpha.N`, GitHub prerelease) |
-| Asset name (Unix) | `gravixlayer-<tag>-<rust-triple>.tar.gz` (+ `.sha256`) |
-| Asset name (Windows) | `gravixlayer-<tag>-<rust-triple>.zip` (+ `.sha256`) |
-| Installer | `scripts/install.sh` / `scripts/install.ps1` (also attached to the release) |
-| Workflow | `.github/workflows/release.yml` |
+| Kind | Version example | Tag | GitHub Release | `curl …/install \| sh` |
+|------|-----------------|-----|----------------|------------------------|
+| Stable | `0.1.0` | `v0.1.0` | latest | installs this |
+| Patch | `0.1.1` | `v0.1.1` | latest | installs this |
+| Minor | `0.2.0` | `v0.2.0` | latest | installs this |
+| Major | `1.0.0` | `v1.0.0` | latest | installs this |
+| Alpha | `0.2.0-alpha.1` | `v0.2.0-alpha.1` | **prerelease** | ignored (stays on latest stable) |
+| Beta | `0.2.0-beta.1` | `v0.2.0-beta.1` | **prerelease** | ignored |
+
+Pin any build: `GRAVIXLAYER_VERSION=v0.2.0-alpha.1 curl -fsSL https://cli.gravixlayer.ai/install | sh`
+
+| Asset | Name |
+|-------|------|
+| Unix | `gravixlayer-<tag>-<rust-triple>.tar.gz` (+ `.sha256`) |
+| Windows | `gravixlayer-<tag>-<rust-triple>.zip` (+ `.sha256`) |
+| Installers | `install.sh`, `install.ps1`, `SHA256SUMS` |
+
+### When to bump (and when not to)
+
+| Change type | Commit prefix | Bump version? | Ship a tag? |
+|-------------|---------------|---------------|-------------|
+| Docs, CI, comments, ops | `chore:` / `docs:` | No | No |
+| Bug fix for users | `fix:` (work commit) | Later → **patch** | When you cut release |
+| New feature, compatible | `feat:` (work commit) | Later → **minor** or alpha | When you cut release |
+| Breaking CLI/API | `feat!:` / `fix!:` | Later → **major** | When you cut release |
+| Risky / unfinished feature | `feat:` | Later → **alpha** | When you cut release |
+| Cutting a release | `chore: release X.Y.Z` | Yes (in that commit) | Yes (tag after) |
+
+Work commits use `fix:` / `feat:` / `chore:`. The version-bump commit is always `chore: release …` — not `fix:`.
+
+Merging a `fix:` to `main` without tagging leaves it unreleased: installed CLIs
+keep the last tagged build. Anything users have to run to benefit from — an
+installer, updater, or dependency fix — needs a patch tag before `gravixlayer
+update` will pick it up.
 
 ### Cutting a release
 
-1. Bump `[package].version` in `Cargo.toml` (and refresh `Cargo.lock` if needed).
-2. Update `CHANGELOG.md`.
-3. Commit, then tag and push:
+Releases are cut by maintainers and are entirely tag-driven, so there is nothing
+to run by hand beyond the version bump:
 
-```bash
-git tag -a v0.1.0 -m "Release 0.1.0"
-git push origin main v0.1.0
-```
+1. Set `[package].version` in `Cargo.toml` to the new version and refresh
+   `Cargo.lock` (`cargo metadata --format-version 1 --no-deps >/dev/null`).
+2. Move the `Unreleased` notes in `CHANGELOG.md` under the new version heading.
+3. Commit as `chore: release X.Y.Z` and push to `main`.
+4. Tag `vX.Y.Z` and push the tag.
 
-The tag **must** match `Cargo.toml` (the `tag-check` job enforces this).  
-Alphas (`v0.2.0-alpha.1`) are published as GitHub prereleases so
-`curl …/install | sh` (no `GRAVIXLAYER_VERSION`) continues to install the
-latest **stable** release.
+Pushing the tag is what publishes: the release workflow builds every target,
+generates checksums, and attaches the binaries and installers to the GitHub
+Release. A tag whose version disagrees with `Cargo.toml` fails the workflow
+rather than publishing a mislabelled build.
+
+Verify a release the way a user would — `gravixlayer update`, or the install
+command from the [README](../README.md).
 
 ### Version is the single source of truth
 

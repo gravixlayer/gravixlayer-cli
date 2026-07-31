@@ -70,7 +70,7 @@ pub struct RuntimeStatusResponse {
 
 /// Response for `POST /v1/agents/runtime/<id>/timeout`.
 ///
-/// Matches Go `SetRuntimeTimeout` JSON and Python `RuntimeTimeoutResponse`.
+/// Matches the Python SDK's `RuntimeTimeoutResponse`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RuntimeTimeoutResponse {
     pub message: Option<String>,
@@ -196,8 +196,8 @@ pub struct SshStatusResponse {
 
 /// A single template entry returned by the API.
 ///
-/// Mirrors Go `TemplateResponse` / Python `TemplateInfo`. The control plane
-/// primary key field is `id`; some older responses used `template_id`.
+/// Mirrors the Python SDK's `TemplateInfo`. The API's primary key field is
+/// `id`; some older responses used `template_id`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Template {
     pub template_id: Option<String>,
@@ -246,7 +246,7 @@ pub struct TemplateList {
 
 /// Response after starting a template build.
 ///
-/// Mirrors Go / Python `TemplateBuildResponse`.
+/// Mirrors the Python SDK's `TemplateBuildResponse`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateBuildResponse {
     pub build_id: String,
@@ -257,7 +257,7 @@ pub struct TemplateBuildResponse {
 
 /// Build status polling response.
 ///
-/// Mirrors Go `TemplateBuildStatusResponse` / Python `TemplateBuildStatus`.
+/// Mirrors the Python SDK's `TemplateBuildStatus`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TemplateBuildStatus {
     pub build_id: String,
@@ -285,7 +285,7 @@ pub struct TemplateSnapshot {
     pub vcpu_count: Option<u32>,
     pub memory_mb: Option<u64>,
     pub created_at: Option<String>,
-    pub envd_version: Option<String>,
+    pub cellcore_version: Option<String>,
     pub snapshot_size_bytes: Option<i64>,
 }
 

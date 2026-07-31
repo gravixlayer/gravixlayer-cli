@@ -1,6 +1,6 @@
 // src/api/billing.rs — Billing and quota API methods.
 //
-// Paths match Go `internal/agents/usage` routes and the control-plane contract:
+// Paths follow the published billing API contract:
 //   GET /v1/agents/billing/summary?month=YYYY-MM&project_id=UUID
 //   GET /v1/agents/billing/history?page=&page_size=&start_time=&end_time=&runtime_id=&status=&project_id=
 //   GET /v1/agents/quota

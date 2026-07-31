@@ -195,7 +195,7 @@ function Install-GravixLayerCli {
         Write-Host "Get started:" -ForegroundColor White
         Write-Host "  gravixlayer auth login        # save your API key"
         Write-Host "  gravixlayer doctor            # verify local install"
-        Write-Host "  gravixlayer runtime create    # spin up a cloud runtime"
+        Write-Host "  gravixlayer runtime create    # spin up a sandbox"
         Write-Host "  gravixlayer --help"
         Write-Host ""
         Write-Host "Documentation: https://docs.gravixlayer.ai"

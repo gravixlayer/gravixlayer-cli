@@ -25,7 +25,7 @@ Primary binary: `gravixlayer` — aliased as `grx` (install script creates the s
 ```
 grx / gravixlayer [GLOBAL FLAGS]
 ├── auth        login | logout | status | token
-├── config      set <key> <val> | get <key> | list
+├── config      show | set <key> <val> | unset <key> | profiles | use-profile <name>
 ├── runtime
 │   ├── create  [--template] [--cloud] [--region] [--timeout] [--env K=V]... [--wait] [--name]
 │   ├── list    [--limit N]
@@ -34,30 +34,41 @@ grx / gravixlayer [GLOBAL FLAGS]
 │   ├── pause   <id>
 │   ├── resume  <id>
 │   ├── metrics <id>
+│   ├── timeout <id> <seconds>
+│   ├── connect <id>
 │   ├── exec    <id> <cmd> [args...]
 │   ├── run     <id> (--code <expr> | --file <path>) [--lang] [--timeout]
 │   ├── shell   <id>
-│   ├── context create|get|delete
+│   ├── context show|set|clear
+│   ├── code-context <id>
+│   ├── service web-url|list|revoke
 │   ├── ssh     enable|disable|status
-│   ├── files   ls|cat|write|upload|download|rm|mkdir|chmod
+│   ├── files   upload|download|ls|cat|write|write-many|info|rm|mkdir|chmod
 │   └── git     clone|status|branch|checkout|pull|push|fetch|add|commit|branch-create|branch-delete
-├── template    list|get|snapshot|build|build-status|delete
+├── template    list|get|snapshot|build|status|delete
 ├── agent
-│   ├── create
+│   ├── init | create
 │   ├── dev     [dir]
+│   ├── up      [dir]
 │   ├── build   [dir] [--wait]
-│   ├── build-status <build-id>
+│   ├── status  <build-id>
 │   ├── deploy  [dir] [--wait | --no-wait]
-│   ├── list
 │   ├── get     <id>
 │   ├── invoke  <id> (--input JSON | --input-file path)
 │   ├── stream  <id> (--input JSON | --input-file path)
-│   ├── logs    <id> [--follow]
+│   ├── package | dockerfile | serve
 │   └── destroy <id> [--force]
-├── billing     summary [--month YYYY-MM] [--project-id] | history | quota
+├── provider    create|list|get|update|delete
+│                 add-secret|list-secrets|update-secret|delete-secret
+│                 attach|detach|list-attached
+├── network-policy
+│                create|list|get|update|delete
+│                add-rule|list-rules|update-rule|delete-rule
+│                attach|detach|list-attached
+├── billing     summary [--month YYYY-MM] [--project-id] | history | quotas
 ├── validate    [dir]
 ├── package     [dir] [--output <path>]
-├── completions bash|zsh|fish|powershell
+├── completions bash|zsh|fish|powershell|elvish
 ├── doctor
 └── update      [--check | --version <VERSION>]
 ```
@@ -88,10 +99,6 @@ Remove the stored API key from the OS keychain.
 
 Check whether a stored API key is present and valid. Prints the user email and account ID.
 
-### `grx auth whoami`
-
-Print the authenticated user's full profile (email, account ID, plan, quota).
-
 ---
 
 ## config
@@ -107,19 +114,28 @@ grx config set default_region eastus2
 grx config set default_cloud azure
 ```
 
-### `grx config get <key>`
+### `grx config show`
 
-Print a single config value.
+Print the resolved configuration for the active profile.
 
-### `grx config list`
+### `grx config unset <key>`
 
-Print all stored config values for the active profile.
+Remove a stored value so the built-in default applies again.
+
+### `grx config profiles`
+
+List configured profiles and show which one is active.
+
+### `grx config use-profile <name>`
+
+Switch the active profile. A single command can override it with `--profile`,
+or the `GRAVIXLAYER_PROFILE` environment variable.
 
 ---
 
 ## runtime
 
-Manage cloud runtime environments (Firecracker micro-VMs).
+Manage sandboxes — isolated, hardware-virtualized environments for running code.
 
 ### `grx runtime create`
 
@@ -165,8 +181,8 @@ Terminate a runtime immediately. This action is irreversible.
 
 ### `grx runtime pause <id>`
 
-Freeze the runtime VM. Billing pauses, VM state is preserved as a Firecracker snapshot.
-Kernel variables and running processes are frozen intact.
+Freeze the runtime. Billing pauses and the runtime's state is preserved as a
+snapshot, with memory and running processes frozen intact.
 
 ### `grx runtime resume <id>`
 
@@ -263,20 +279,40 @@ grx runtime files chmod    <id> <path> <mode>
 
 ### `grx runtime git`
 
-Git operations executed inside the runtime.
+Git operations executed inside the runtime. Every subcommand that works on an
+existing checkout takes `--path`, the repository directory inside the runtime.
 
 ```
-grx runtime git clone          <id> <url> [--path <PATH>]
-grx runtime git status         <id> [--path <PATH>]
-grx runtime git branch         <id> [--path <PATH>]
-grx runtime git checkout       <id> <branch> [--path <PATH>]
-grx runtime git pull           <id> [--path <PATH>]
-grx runtime git push           <id> [--path <PATH>]
-grx runtime git fetch          <id> [--path <PATH>]
-grx runtime git add            <id> [--path <PATH>] [--files <GLOB>]
-grx runtime git commit         <id> --message <MSG> [--path <PATH>]
-grx runtime git branch-create  <id> <name> [--path <PATH>]
-grx runtime git branch-delete  <id> <name> [--path <PATH>]
+grx runtime git clone          <id> <url> [--target-dir <DIR>] [--branch <B>] [--depth <N>]
+grx runtime git status         <id> --path <PATH>
+grx runtime git branch         <id> --path <PATH> [--all | --remote]
+grx runtime git checkout       <id> <branch> --path <PATH>
+grx runtime git pull           <id> --path <PATH> [--remote <R>] [--branch <B>]
+grx runtime git push           <id> --path <PATH> [--remote <R>] [--refspec <SPEC>]
+grx runtime git fetch          <id> --path <PATH> [--remote <R>]
+grx runtime git add            <id> --path <PATH> [--files <GLOB>]
+grx runtime git commit         <id> --path <PATH> --message <MSG>
+grx runtime git branch-create  <id> <name> --path <PATH> [--start-point <REF>]
+grx runtime git branch-delete  <id> <name> --path <PATH> [--force]
+```
+
+`clone` defaults `--target-dir` to `/workspace/<repository name>`, the same
+directory `git clone` would create locally.
+
+**Private repositories.** `clone`, `pull`, `fetch`, and `push` accept
+`--auth-token`, which also reads `GRAVIXLAYER_GIT_TOKEN` from the environment so
+a workflow need not put the token on the command line. The token authenticates
+one operation and is never written into the checkout, so each command that
+contacts the remote needs its own. `push` also accepts `--username` and
+`--password` for remotes that need a real account; `--auth-token` wins when both
+are given.
+
+**Exit codes.** These commands exit with git's own status, so a failed operation
+stops a shell chain or a CI step the way it would running git locally:
+
+```bash
+grx runtime git clone "$RT" "$URL" --target-dir /workspace/app \
+  && grx runtime exec "$RT" -- make test
 ```
 
 ---
@@ -324,9 +360,9 @@ Examples:
   grx template build --docker-image ubuntu:24.04 --name my-ubuntu --wait
 ```
 
-### `grx template build-status <build-id>`
+### `grx template status <build-id>`
 
-Check the status of a running template build.
+Poll the status of a running template build.
 
 ### `grx template delete <id>`
 
@@ -465,9 +501,9 @@ Excluded from archive:
   *.egg-info   .DS_Store  .mypy_cache  .pytest_cache  .ruff_cache  .tox
 ```
 
-### `grx agent build-status <build-id>`
+### `grx agent status <build-id>`
 
-Check the current status of a background build operation.
+Show the build status for an agent build.
 
 ### `grx agent deploy [dir]`
 
@@ -484,14 +520,6 @@ grx agent deploy [DIR] [--wait | --no-wait]
 Output on success:
   Agent deployed: https://my-agent-abc123.gravixlayer.ai
   Protocols: HTTP, A2A, MCP
-```
-
-### `grx agent list`
-
-List all deployed agents.
-
-```
-Columns: ID | Name | Framework | Status | Endpoint | Created
 ```
 
 ### `grx agent get <id>`
@@ -514,16 +542,6 @@ Stream an agent response via SSE (Server-Sent Events), printing chunks as they a
 ```
 grx agent stream <id> --input '{"message": "Explain quantum computing"}'
 grx agent stream <id> --input-file request.json
-```
-
-### `grx agent logs <id>`
-
-Fetch runtime logs for a deployed agent.
-
-```
-grx agent logs <id> [--follow]
-
-  --follow   Stream logs in real time (equivalent to tail -f)
 ```
 
 ### `grx agent destroy <id>`
@@ -554,9 +572,9 @@ grx billing history [--limit <N>]
 Columns: Date | Description | Credits | Amount
 ```
 
-### `grx billing quota`
+### `grx billing quotas`
 
-Print current plan limits and usage (API calls/min, max runtimes, storage GB).
+Show quota and limit details for the account.
 
 ---
 

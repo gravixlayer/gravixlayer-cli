@@ -319,7 +319,7 @@ Refusing to install without verification. Set GRAVIXLAYER_NO_VERIFY=1 to overrid
 Get started:
   gravixlayer auth login        # save your API key
   gravixlayer doctor            # verify local install
-  gravixlayer runtime create    # spin up a cloud runtime
+  gravixlayer runtime create    # spin up a sandbox
   gravixlayer --help
 
 Update later:

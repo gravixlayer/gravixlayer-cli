@@ -41,7 +41,7 @@ impl<'a> AgentApi<'a> {
             body: format!("failed to serialize build metadata: {e}"),
         })?;
 
-        // Build multipart form — two named parts as expected by the Go handler.
+        // Build multipart form — two named parts, as the build endpoint expects.
         let archive_part = multipart::Part::bytes(archive_bytes)
             .file_name("archive.tar.gz")
             .mime_str("application/gzip")

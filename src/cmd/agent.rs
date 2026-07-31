@@ -713,9 +713,9 @@ async fn build(ctx: &AppContext, args: AgentBuildArgs) -> Result<()> {
     let archive_bytes = archive::create_source_archive(&source.root, &extra_excludes)?;
     drop(spinner);
 
-    // Reject archives that exceed the platform limit. The cap is consistent across
-    // the CLI, HTTP API, and gRPC transport so a build never passes one layer only
-    // to fail at the next. Real agents should be far smaller.
+    // Reject archives that exceed the platform limit. Checking here turns a
+    // rejected upload into an immediate local error instead of a failure after
+    // the whole archive has been sent. Real agents should be far smaller.
     const MAX_ARCHIVE_BYTES: usize = 104_857_600; // 100 MB
     if archive_bytes.len() > MAX_ARCHIVE_BYTES {
         bail!(

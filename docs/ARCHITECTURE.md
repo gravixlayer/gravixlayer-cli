@@ -282,5 +282,3 @@ The following are deferred to v2:
 - Admin / team management endpoints
 - Wallet, payments, invoice management
 - ratatui TUI dashboard
-- Windows PTY via ConPTY (`runtime shell` prints "not supported on Windows" in v1)
-- `grx doctor` diagnostic command

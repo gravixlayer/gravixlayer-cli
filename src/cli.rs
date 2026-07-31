@@ -669,17 +669,24 @@ pub enum RuntimeGitCommand {
     BranchDelete(RuntimeGitBranchDeleteArgs),
 }
 
+// Every subcommand below that operates on an existing repository requires
+// `--path`. It used to default to `/`, which is never a repository, so the
+// default could only ever produce a "not a git repository" failure from the
+// runtime; requiring the value turns that into an immediate argument error.
+
 #[derive(Debug, Args)]
 pub struct RuntimeGitStatusArgs {
     pub runtime_id: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
 }
 
 #[derive(Debug, Args)]
 pub struct RuntimeGitBranchArgs {
     pub runtime_id: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
     /// List remote branches
     #[arg(long)]
@@ -693,23 +700,29 @@ pub struct RuntimeGitBranchArgs {
 pub struct RuntimeGitCheckoutArgs {
     pub runtime_id: String,
     pub branch: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
 }
 
 #[derive(Debug, Args)]
 pub struct RuntimeGitFetchArgs {
     pub runtime_id: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
     #[arg(long)]
     pub remote: Option<String>,
+    /// Token for a private HTTPS remote; used for this command only
+    #[arg(long, env = "GRAVIXLAYER_GIT_TOKEN")]
+    pub auth_token: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct RuntimeGitAddArgs {
     pub runtime_id: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
     /// Paths to stage (default: all)
     #[arg(long, value_name = "FILE")]
@@ -721,7 +734,8 @@ pub struct RuntimeGitCommitArgs {
     pub runtime_id: String,
     #[arg(long, short = 'm', required = true)]
     pub message: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
     #[arg(long)]
     pub author_name: Option<String>,
@@ -734,7 +748,8 @@ pub struct RuntimeGitCommitArgs {
 #[derive(Debug, Args)]
 pub struct RuntimeGitPushArgs {
     pub runtime_id: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
     #[arg(long)]
     pub remote: Option<String>,
@@ -744,13 +759,17 @@ pub struct RuntimeGitPushArgs {
     pub username: Option<String>,
     #[arg(long)]
     pub password: Option<String>,
+    /// Token for a private HTTPS remote; takes precedence over --username/--password
+    #[arg(long, env = "GRAVIXLAYER_GIT_TOKEN")]
+    pub auth_token: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct RuntimeGitBranchCreateArgs {
     pub runtime_id: String,
     pub branch_name: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
     #[arg(long)]
     pub start_point: Option<String>,
@@ -760,7 +779,8 @@ pub struct RuntimeGitBranchCreateArgs {
 pub struct RuntimeGitBranchDeleteArgs {
     pub runtime_id: String,
     pub branch_name: String,
-    #[arg(long, default_value = "/")]
+    /// Repository directory inside the runtime
+    #[arg(long)]
     pub path: String,
     #[arg(long)]
     pub force: bool,
@@ -770,25 +790,32 @@ pub struct RuntimeGitBranchDeleteArgs {
 pub struct RuntimeGitCloneArgs {
     pub runtime_id: String,
     pub repo_url: String,
+    /// Destination directory (default: /workspace/<repository name>, as `git clone` does)
     #[arg(long)]
     pub target_dir: Option<String>,
     #[arg(long)]
     pub branch: Option<String>,
     #[arg(long)]
     pub depth: Option<u32>,
-    #[arg(long)]
+    /// Token for a private HTTPS repository; used for this clone only and not
+    /// stored in the checkout, so later pull/fetch/push need their own token
+    #[arg(long, env = "GRAVIXLAYER_GIT_TOKEN")]
     pub auth_token: Option<String>,
 }
 
 #[derive(Debug, Args)]
 pub struct RuntimeGitPullArgs {
     pub runtime_id: String,
-    #[arg(long)]
-    pub workdir: Option<String>,
+    /// Repository directory inside the runtime
+    #[arg(long, alias = "workdir")]
+    pub path: String,
     #[arg(long)]
     pub remote: Option<String>,
     #[arg(long)]
     pub branch: Option<String>,
+    /// Token for a private HTTPS remote; used for this command only
+    #[arg(long, env = "GRAVIXLAYER_GIT_TOKEN")]
+    pub auth_token: Option<String>,
 }
 
 #[derive(Debug, Args)]

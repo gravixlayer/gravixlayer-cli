@@ -18,7 +18,7 @@ resolve the latest **stable** release.
 - `gravixlayer doctor` for local install/auth diagnostics
 - Template `snapshot` command and `kind` / `project_id` list filters
 - Billing `summary --month` / `--project_id` and expanded history filters
-- API response field parity with the Python SDK and Go control plane
+- API response field parity with the Python SDK and public API
   (runtime aliases, build `template_id` / `progress_percent` / `error`, template resource fields)
 
 ## [0.1.0] - TBD
