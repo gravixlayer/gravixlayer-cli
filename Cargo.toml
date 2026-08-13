@@ -1,6 +1,6 @@
 [package]
 name        = "gravixlayer"
-version     = "0.1.1"
+version     = "0.1.2"
 edition     = "2021"
 authors     = ["GravixLayer <support@gravixlayer.ai>"]
 description = "Official CLI for the GravixLayer AI agent platform"

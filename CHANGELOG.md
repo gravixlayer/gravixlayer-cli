@@ -11,6 +11,14 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-08-13
+
+### Added
+
+- `runtime pty` for programmatic PTY sessions (create, list, attach, send, resize, signal, kill)
+- `runtime exec --stream` for incremental stdout/stderr over SSE
+- Runtime files: `mv`, `cp`, `chown`, `watch`, `find`, and `replace`
+
 ## [0.1.1] - 2026-07-31
 
 ### Fixed
