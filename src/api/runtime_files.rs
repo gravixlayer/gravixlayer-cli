@@ -58,6 +58,57 @@ pub struct ChmodResponse {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct MoveResponse {
+    pub success: Option<bool>,
+    pub entry: Option<FileInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CopyResponse {
+    pub success: Option<bool>,
+    pub entry: Option<FileInfo>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ChownResponse {
+    pub success: Option<bool>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SearchMatch {
+    pub path: String,
+    pub line: Option<u32>,
+    pub column: Option<u32>,
+    pub content: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FindResponse {
+    pub success: Option<bool>,
+    #[serde(default)]
+    pub matches: Vec<SearchMatch>,
+    pub truncated: Option<bool>,
+    pub files_scanned: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FileReplacement {
+    pub path: String,
+    pub replacements: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReplaceResponse {
+    pub success: Option<bool>,
+    #[serde(default)]
+    pub files: Vec<FileReplacement>,
+    pub total_replacements: Option<u64>,
+    pub files_scanned: Option<u64>,
+    pub dry_run: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UploadResult {
     pub path: String,
     pub name: Option<String>,
@@ -253,6 +304,249 @@ impl<'a> RuntimeFilesApi<'a> {
             .json()
             .await
             .context("parse chmod")
+    }
+
+    /// `POST /v1/agents/runtime/{id}/files/move`
+    pub async fn move_path(
+        &self,
+        runtime_id: &str,
+        source: &str,
+        destination: &str,
+        overwrite: bool,
+    ) -> Result<MoveResponse> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/files/move"));
+        let body = serde_json::json!({
+            "source": source,
+            "destination": destination,
+            "overwrite": overwrite,
+        });
+        let resp = self
+            .client
+            .http_client()
+            .post(&url)
+            .bearer_auth(self.client.api_key_str())
+            .json(&body)
+            .send()
+            .await
+            .context("runtime file move request")?;
+        ApiClient::check_status(resp)
+            .await?
+            .json()
+            .await
+            .context("parse move")
+    }
+
+    /// `POST /v1/agents/runtime/{id}/files/copy`
+    pub async fn copy_path(
+        &self,
+        runtime_id: &str,
+        source: &str,
+        destination: &str,
+        recursive: bool,
+        overwrite: bool,
+    ) -> Result<CopyResponse> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/files/copy"));
+        let body = serde_json::json!({
+            "source": source,
+            "destination": destination,
+            "recursive": recursive,
+            "overwrite": overwrite,
+        });
+        let resp = self
+            .client
+            .http_client()
+            .post(&url)
+            .bearer_auth(self.client.api_key_str())
+            .json(&body)
+            .send()
+            .await
+            .context("runtime file copy request")?;
+        ApiClient::check_status(resp)
+            .await?
+            .json()
+            .await
+            .context("parse copy")
+    }
+
+    /// `POST /v1/agents/runtime/{id}/files/chown`
+    pub async fn chown(
+        &self,
+        runtime_id: &str,
+        path: &str,
+        user: Option<&str>,
+        group: Option<&str>,
+        recursive: bool,
+    ) -> Result<ChownResponse> {
+        if user.is_none() && group.is_none() {
+            bail!("at least one of --user or --group must be provided");
+        }
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/files/chown"));
+        let mut body = serde_json::json!({ "path": path, "recursive": recursive });
+        if let Some(user) = user {
+            body["user"] = serde_json::Value::String(user.to_string());
+        }
+        if let Some(group) = group {
+            body["group"] = serde_json::Value::String(group.to_string());
+        }
+        let resp = self
+            .client
+            .http_client()
+            .post(&url)
+            .bearer_auth(self.client.api_key_str())
+            .json(&body)
+            .send()
+            .await
+            .context("runtime file chown request")?;
+        ApiClient::check_status(resp)
+            .await?
+            .json()
+            .await
+            .context("parse chown")
+    }
+
+    /// `POST /v1/agents/runtime/{id}/files/watch`
+    ///
+    /// Returns the raw streaming response; the caller consumes the SSE frames.
+    /// The stream stays open until the caller drops it or the runtime stops.
+    pub async fn watch(
+        &self,
+        runtime_id: &str,
+        path: &str,
+        recursive: bool,
+    ) -> Result<reqwest::Response> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/files/watch"));
+        let body = serde_json::json!({ "path": path, "recursive": recursive });
+        let resp = self
+            .client
+            .http_client()
+            .post(&url)
+            .bearer_auth(self.client.api_key_str())
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .json(&body)
+            .send()
+            .await
+            .context("runtime file watch request")?;
+        ApiClient::check_status(resp).await
+    }
+
+    /// `POST /v1/agents/runtime/{id}/files/find`
+    ///
+    /// Name-glob and/or content search executed natively inside the guest. At least
+    /// one of `pattern` or `glob` must be supplied.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn find(
+        &self,
+        runtime_id: &str,
+        path: &str,
+        pattern: Option<&str>,
+        glob: Option<&str>,
+        regex: bool,
+        case_sensitive: bool,
+        include_hidden: bool,
+        max_results: Option<u32>,
+        max_depth: Option<u32>,
+    ) -> Result<FindResponse> {
+        if pattern.is_none() && glob.is_none() {
+            bail!("at least one of --pattern or --glob must be provided");
+        }
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/files/find"));
+        let mut body = serde_json::json!({
+            "path": path,
+            "regex": regex,
+            "case_sensitive": case_sensitive,
+            "include_hidden": include_hidden,
+        });
+        if let Some(pattern) = pattern {
+            body["pattern"] = serde_json::Value::String(pattern.to_string());
+        }
+        if let Some(glob) = glob {
+            body["glob"] = serde_json::Value::String(glob.to_string());
+        }
+        if let Some(max_results) = max_results {
+            body["max_results"] = serde_json::Value::from(max_results);
+        }
+        if let Some(max_depth) = max_depth {
+            body["max_depth"] = serde_json::Value::from(max_depth);
+        }
+        let resp = self
+            .client
+            .http_client()
+            .post(&url)
+            .bearer_auth(self.client.api_key_str())
+            .json(&body)
+            .send()
+            .await
+            .context("runtime file find request")?;
+        ApiClient::check_status(resp)
+            .await?
+            .json()
+            .await
+            .context("parse find")
+    }
+
+    /// `POST /v1/agents/runtime/{id}/files/replace`
+    ///
+    /// Rewrites every matching file through a temporary sibling and a rename, so a
+    /// reader never observes a partially written file.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_replace(
+        &self,
+        runtime_id: &str,
+        path: &str,
+        pattern: &str,
+        replacement: &str,
+        glob: Option<&str>,
+        regex: bool,
+        case_sensitive: bool,
+        include_hidden: bool,
+        max_depth: Option<u32>,
+        dry_run: bool,
+    ) -> Result<ReplaceResponse> {
+        if pattern.is_empty() {
+            bail!("pattern must not be empty");
+        }
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/files/replace"));
+        let mut body = serde_json::json!({
+            "path": path,
+            "pattern": pattern,
+            "replacement": replacement,
+            "regex": regex,
+            "case_sensitive": case_sensitive,
+            "include_hidden": include_hidden,
+            "dry_run": dry_run,
+        });
+        if let Some(glob) = glob {
+            body["glob"] = serde_json::Value::String(glob.to_string());
+        }
+        if let Some(max_depth) = max_depth {
+            body["max_depth"] = serde_json::Value::from(max_depth);
+        }
+        let resp = self
+            .client
+            .http_client()
+            .post(&url)
+            .bearer_auth(self.client.api_key_str())
+            .json(&body)
+            .send()
+            .await
+            .context("runtime file replace request")?;
+        ApiClient::check_status(resp)
+            .await?
+            .json()
+            .await
+            .context("parse replace")
     }
 
     /// Multipart upload: `POST /v1/agents/runtime/{id}/files?path=<path>`

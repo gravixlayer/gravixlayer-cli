@@ -7,13 +7,17 @@ use crate::api::types::CreateRuntimeRequest;
 use crate::cli::{
     RuntimeCodeContextCommand, RuntimeCommand, RuntimeConnectArgs, RuntimeContextCommand,
     RuntimeCreateArgs, RuntimeExecArgs, RuntimeFilesCatArgs, RuntimeFilesChmodArgs,
-    RuntimeFilesCommand, RuntimeFilesDeleteArgs, RuntimeFilesDownloadArgs, RuntimeFilesInfoArgs,
-    RuntimeFilesListArgs, RuntimeFilesMkdirArgs, RuntimeFilesUploadArgs, RuntimeFilesWriteArgs,
-    RuntimeFilesWriteManyArgs, RuntimeGetArgs, RuntimeGitAddArgs, RuntimeGitBranchArgs,
-    RuntimeGitBranchCreateArgs, RuntimeGitBranchDeleteArgs, RuntimeGitCheckoutArgs,
-    RuntimeGitCloneArgs, RuntimeGitCommand, RuntimeGitCommitArgs, RuntimeGitFetchArgs,
-    RuntimeGitPullArgs, RuntimeGitPushArgs, RuntimeGitStatusArgs, RuntimeKillArgs, RuntimeListArgs,
-    RuntimeMetricsArgs, RuntimePauseArgs, RuntimeResumeArgs, RuntimeRunArgs, RuntimeServiceCommand,
+    RuntimeFilesChownArgs, RuntimeFilesCommand, RuntimeFilesCopyArgs, RuntimeFilesDeleteArgs,
+    RuntimeFilesDownloadArgs, RuntimeFilesFindArgs, RuntimeFilesInfoArgs, RuntimeFilesListArgs,
+    RuntimeFilesMkdirArgs, RuntimeFilesMoveArgs, RuntimeFilesReplaceArgs, RuntimeFilesUploadArgs,
+    RuntimeFilesWatchArgs, RuntimeFilesWriteArgs, RuntimeFilesWriteManyArgs, RuntimeGetArgs,
+    RuntimeGitAddArgs, RuntimeGitBranchArgs, RuntimeGitBranchCreateArgs,
+    RuntimeGitBranchDeleteArgs, RuntimeGitCheckoutArgs, RuntimeGitCloneArgs, RuntimeGitCommand,
+    RuntimeGitCommitArgs, RuntimeGitFetchArgs, RuntimeGitPullArgs, RuntimeGitPushArgs,
+    RuntimeGitStatusArgs, RuntimeKillArgs, RuntimeListArgs, RuntimeMetricsArgs, RuntimePauseArgs,
+    RuntimePtyAttachArgs, RuntimePtyCommand, RuntimePtyCreateArgs, RuntimePtyGetArgs,
+    RuntimePtyKillArgs, RuntimePtyListArgs, RuntimePtyResizeArgs, RuntimePtySendArgs,
+    RuntimePtySignalArgs, RuntimeResumeArgs, RuntimeRunArgs, RuntimeServiceCommand,
     RuntimeServiceListArgs, RuntimeServiceRevokeArgs, RuntimeServiceWebUrlArgs, RuntimeShellArgs,
     RuntimeSshCommand, RuntimeTimeoutArgs,
 };
@@ -40,6 +44,7 @@ pub async fn handle(ctx: &mut AppContext, cmd: RuntimeCommand) -> anyhow::Result
         RuntimeCommand::CodeContext(args) => code_context(ctx, args.command).await,
         RuntimeCommand::Ssh(args) => ssh(ctx, args.command).await,
         RuntimeCommand::Files(args) => files(ctx, args.command).await,
+        RuntimeCommand::Pty(args) => pty_command(ctx, args.command).await,
         RuntimeCommand::Git(args) => git(ctx, args.command).await,
         RuntimeCommand::Timeout(args) => set_timeout(ctx, args).await,
     }
@@ -530,6 +535,10 @@ async fn run(ctx: &AppContext, args: RuntimeRunArgs) -> anyhow::Result<()> {
         payload["language"] = serde_json::Value::String(lang.to_string());
     }
 
+    if args.stream {
+        return run_code_stream(ctx, &args.id, &payload).await;
+    }
+
     let resp = ctx
         .api
         .runtime()
@@ -542,6 +551,104 @@ async fn run(ctx: &AppContext, args: RuntimeRunArgs) -> anyhow::Result<()> {
             serde_json::to_string_pretty(&resp).unwrap_or_default()
         );
     });
+    Ok(())
+}
+
+/// Render an incrementally streamed code execution.
+///
+/// stdout and stderr arrive as `text` fields (the command stream uses `data`),
+/// and a failing cell surfaces as a structured `error` frame rather than a
+/// non-zero exit code, so it is mapped onto a process exit code here.
+async fn run_code_stream(
+    ctx: &AppContext,
+    runtime_id: &str,
+    payload: &serde_json::Value,
+) -> anyhow::Result<()> {
+    use futures_util::StreamExt;
+    use std::io::Write;
+
+    let response = ctx
+        .api
+        .runtime()
+        .run_code_stream(runtime_id, payload)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut failed = false;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow::anyhow!("stream code response: {e}"))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(separator_index) = buffer.find("\n\n") {
+            let frame = buffer[..separator_index].to_string();
+            buffer.drain(..separator_index + 2);
+
+            for line in frame.lines() {
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let event: serde_json::Value = serde_json::from_str(data.trim())?;
+                match event.get("type").and_then(|value| value.as_str()) {
+                    Some("stdout") => {
+                        if let Some(text) = event.get("text").and_then(|value| value.as_str()) {
+                            print!("{text}");
+                            std::io::stdout().flush()?;
+                        }
+                    }
+                    Some("stderr") => {
+                        if let Some(text) = event.get("text").and_then(|value| value.as_str()) {
+                            eprint!("{text}");
+                            std::io::stderr().flush()?;
+                        }
+                    }
+                    Some("result") => {
+                        // Rich results (charts, images, HTML) have no terminal
+                        // representation, so only the plain-text form is shown.
+                        if let Some(text) = event
+                            .get("result")
+                            .and_then(|value| value.get("text"))
+                            .and_then(|value| value.as_str())
+                        {
+                            println!("{text}");
+                            std::io::stdout().flush()?;
+                        }
+                    }
+                    Some("error") => {
+                        failed = true;
+                        let error = event.get("error");
+                        let name = error
+                            .and_then(|value| value.get("name"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("Error");
+                        let value = error
+                            .and_then(|value| value.get("value"))
+                            .and_then(|value| value.as_str())
+                            .unwrap_or_default();
+                        eprintln!("{name}: {value}");
+                        if let Some(traceback) = error
+                            .and_then(|value| value.get("traceback"))
+                            .and_then(|value| value.as_array())
+                        {
+                            for entry in traceback {
+                                if let Some(entry) = entry.as_str() {
+                                    eprintln!("{entry}");
+                                }
+                            }
+                        }
+                        std::io::stderr().flush()?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if failed {
+        std::process::exit(1);
+    }
     Ok(())
 }
 
@@ -707,6 +814,12 @@ async fn files(ctx: &AppContext, cmd: RuntimeFilesCommand) -> anyhow::Result<()>
         RuntimeFilesCommand::Delete(args) => files_delete(ctx, args).await,
         RuntimeFilesCommand::Mkdir(args) => files_mkdir(ctx, args).await,
         RuntimeFilesCommand::Chmod(args) => files_chmod(ctx, args).await,
+        RuntimeFilesCommand::Move(args) => files_move(ctx, args).await,
+        RuntimeFilesCommand::Copy(args) => files_copy(ctx, args).await,
+        RuntimeFilesCommand::Chown(args) => files_chown(ctx, args).await,
+        RuntimeFilesCommand::Watch(args) => files_watch(ctx, args).await,
+        RuntimeFilesCommand::Find(args) => files_find(ctx, args).await,
+        RuntimeFilesCommand::Replace(args) => files_replace(ctx, args).await,
     }
 }
 
@@ -901,6 +1014,460 @@ async fn files_chmod(ctx: &AppContext, args: RuntimeFilesChmodArgs) -> anyhow::R
         .await?;
     output::print_or_json(ctx.output, &resp, || {
         output::success(ctx.output, format!("chmod {} {}", args.mode, args.path));
+    });
+    Ok(())
+}
+
+async fn files_move(ctx: &AppContext, args: RuntimeFilesMoveArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_files()
+        .move_path(
+            &args.runtime_id,
+            &args.source,
+            &args.destination,
+            args.overwrite,
+        )
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        output::success(
+            ctx.output,
+            format!("Moved {} -> {}", args.source, args.destination),
+        );
+    });
+    Ok(())
+}
+
+async fn files_copy(ctx: &AppContext, args: RuntimeFilesCopyArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_files()
+        .copy_path(
+            &args.runtime_id,
+            &args.source,
+            &args.destination,
+            args.recursive,
+            args.overwrite,
+        )
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        output::success(
+            ctx.output,
+            format!("Copied {} -> {}", args.source, args.destination),
+        );
+    });
+    Ok(())
+}
+
+async fn files_chown(ctx: &AppContext, args: RuntimeFilesChownArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_files()
+        .chown(
+            &args.runtime_id,
+            &args.path,
+            args.user.as_deref(),
+            args.group.as_deref(),
+            args.recursive,
+        )
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        let owner = match (args.user.as_deref(), args.group.as_deref()) {
+            (Some(user), Some(group)) => format!("{user}:{group}"),
+            (Some(user), None) => user.to_string(),
+            (None, Some(group)) => format!(":{group}"),
+            (None, None) => String::new(),
+        };
+        output::success(ctx.output, format!("chown {} {}", owner, args.path));
+    });
+    Ok(())
+}
+
+/// Stream inotify events from a runtime directory until interrupted.
+///
+/// Runs until the user cancels or the runtime goes away; there is no natural
+/// end to a watch, so a clean `Ok(())` on stream close is the correct result.
+async fn files_watch(ctx: &AppContext, args: RuntimeFilesWatchArgs) -> anyhow::Result<()> {
+    use futures_util::StreamExt;
+    use std::io::Write;
+
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let json_mode = ctx.output == crate::cli::OutputFormat::Json;
+
+    let response = ctx
+        .api
+        .runtime_files()
+        .watch(&args.runtime_id, &args.path, args.recursive)
+        .await?;
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow::anyhow!("stream watch response: {e}"))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(separator_index) = buffer.find("\n\n") {
+            let frame = buffer[..separator_index].to_string();
+            buffer.drain(..separator_index + 2);
+
+            for line in frame.lines() {
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let payload: serde_json::Value = serde_json::from_str(data.trim())?;
+                if json_mode {
+                    println!("{payload}");
+                    std::io::stdout().flush()?;
+                    continue;
+                }
+
+                let event_type = payload
+                    .get("type")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("unknown");
+                if event_type == "error" {
+                    let message = payload
+                        .get("message")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("runtime watch stream failed");
+                    anyhow::bail!(message.to_string());
+                }
+                let path = payload
+                    .get("path")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or_default();
+                match payload.get("new_path").and_then(|value| value.as_str()) {
+                    Some(new_path) if !new_path.is_empty() => {
+                        println!("{event_type:<8} {path} -> {new_path}")
+                    }
+                    _ => println!("{event_type:<8} {path}"),
+                }
+                std::io::stdout().flush()?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Find files by name glob and/or content pattern, natively inside the guest.
+async fn files_find(ctx: &AppContext, args: RuntimeFilesFindArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_files()
+        .find(
+            &args.runtime_id,
+            &args.path,
+            args.pattern.as_deref(),
+            args.glob.as_deref(),
+            args.regex,
+            args.case_sensitive,
+            args.include_hidden,
+            args.max_results,
+            args.max_depth,
+        )
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        if resp.matches.is_empty() {
+            output::success(ctx.output, "No matches".to_string());
+            return;
+        }
+        for entry in &resp.matches {
+            match entry.line.unwrap_or(0) {
+                0 => println!("{}", entry.path),
+                line => println!(
+                    "{}:{}: {}",
+                    entry.path,
+                    line,
+                    entry.content.as_deref().unwrap_or_default()
+                ),
+            }
+        }
+        if resp.truncated.unwrap_or(false) {
+            output::success(
+                ctx.output,
+                format!(
+                    "{} matches shown (truncated; raise --max-results for more)",
+                    resp.matches.len()
+                ),
+            );
+        }
+    });
+    Ok(())
+}
+
+/// Replace a pattern across every matching file, atomically per file.
+async fn files_replace(ctx: &AppContext, args: RuntimeFilesReplaceArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_files()
+        .search_replace(
+            &args.runtime_id,
+            &args.path,
+            &args.pattern,
+            &args.replacement,
+            args.glob.as_deref(),
+            args.regex,
+            args.case_sensitive,
+            args.include_hidden,
+            args.max_depth,
+            args.dry_run,
+        )
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        for entry in &resp.files {
+            println!("{}: {}", entry.path, entry.replacements.unwrap_or(0));
+        }
+        let verb = if args.dry_run {
+            "would replace"
+        } else {
+            "replaced"
+        };
+        output::success(
+            ctx.output,
+            format!(
+                "{} {} occurrence(s) across {} file(s)",
+                verb,
+                resp.total_replacements.unwrap_or(0),
+                resp.files.len()
+            ),
+        );
+    });
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// PTY sessions
+// ---------------------------------------------------------------------------
+
+async fn pty_command(ctx: &AppContext, cmd: RuntimePtyCommand) -> anyhow::Result<()> {
+    match cmd {
+        RuntimePtyCommand::Create(args) => pty_create(ctx, args).await,
+        RuntimePtyCommand::List(args) => pty_list(ctx, args).await,
+        RuntimePtyCommand::Get(args) => pty_get(ctx, args).await,
+        RuntimePtyCommand::Send(args) => pty_send(ctx, args).await,
+        RuntimePtyCommand::Resize(args) => pty_resize(ctx, args).await,
+        RuntimePtyCommand::Signal(args) => pty_signal(ctx, args).await,
+        RuntimePtyCommand::Attach(args) => pty_attach(ctx, args).await,
+        RuntimePtyCommand::Kill(args) => pty_kill(ctx, args).await,
+    }
+}
+
+fn print_pty_session(ctx: &AppContext, session: &crate::api::runtime_pty::PtySession) {
+    output::kv(ctx.output, "session_id", &session.session_id);
+    output::kv(ctx.output, "status", &session.status);
+    output::kv(ctx.output, "pid", &session.pid.to_string());
+    output::kv(ctx.output, "shell", &session.shell);
+    output::kv(ctx.output, "working_dir", &session.working_dir);
+    output::kv(
+        ctx.output,
+        "size",
+        &format!("{}x{}", session.cols, session.rows),
+    );
+    if session.status == "exited" {
+        output::kv(ctx.output, "exit_code", &session.exit_code.to_string());
+    }
+    output::kv(
+        ctx.output,
+        "created_at",
+        session.created_at.as_deref().unwrap_or("-"),
+    );
+}
+
+async fn pty_create(ctx: &AppContext, args: RuntimePtyCreateArgs) -> anyhow::Result<()> {
+    use crate::api::runtime_pty::PtyCreateParams;
+
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let params = PtyCreateParams {
+        shell: args.shell,
+        working_dir: args.workdir,
+        environment: parse_env_vars(&args.env_vars)?,
+        cols: args.cols,
+        rows: args.rows,
+    };
+    let resp = ctx
+        .api
+        .runtime_pty()
+        .create(&args.runtime_id, &params)
+        .await?;
+    output::print_or_json(ctx.output, &resp, || print_pty_session(ctx, &resp));
+    Ok(())
+}
+
+async fn pty_list(ctx: &AppContext, args: RuntimePtyListArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx.api.runtime_pty().list(&args.runtime_id).await?;
+    output::print_or_json(ctx.output, &resp, || {
+        if resp.sessions.is_empty() {
+            output::info(ctx.output, "No PTY sessions");
+            return;
+        }
+        println!("{}", table::pty_session_table(&resp.sessions));
+    });
+    Ok(())
+}
+
+async fn pty_get(ctx: &AppContext, args: RuntimePtyGetArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_pty()
+        .get(&args.runtime_id, &args.session_id)
+        .await?;
+    output::print_or_json(ctx.output, &resp, || print_pty_session(ctx, &resp));
+    Ok(())
+}
+
+async fn pty_send(ctx: &AppContext, args: RuntimePtySendArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    // Reading raw bytes from stdin keeps control sequences and non-UTF-8 input intact.
+    let mut data = match args.data {
+        Some(text) => text.into_bytes(),
+        None => {
+            use std::io::Read;
+            let mut buf = Vec::new();
+            std::io::stdin().read_to_end(&mut buf)?;
+            buf
+        }
+    };
+    if !args.no_newline && !data.ends_with(b"\n") {
+        data.push(b'\n');
+    }
+    let resp = ctx
+        .api
+        .runtime_pty()
+        .send_input(&args.runtime_id, &args.session_id, &data)
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        output::success(
+            ctx.output,
+            format!("Sent {} bytes", resp.bytes_written.unwrap_or_default()),
+        );
+    });
+    Ok(())
+}
+
+async fn pty_resize(ctx: &AppContext, args: RuntimePtyResizeArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_pty()
+        .resize(&args.runtime_id, &args.session_id, args.cols, args.rows)
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        output::success(
+            ctx.output,
+            format!("Resized to {}x{}", args.cols, args.rows),
+        );
+    });
+    Ok(())
+}
+
+async fn pty_signal(ctx: &AppContext, args: RuntimePtySignalArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_pty()
+        .signal(&args.runtime_id, &args.session_id, &args.signal)
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        output::success(
+            ctx.output,
+            format!("Sent SIG{}", args.signal.to_uppercase()),
+        );
+    });
+    Ok(())
+}
+
+/// Replay a session's scrollback and then follow its live output.
+///
+/// Output is written to stdout verbatim as raw bytes so terminal escape
+/// sequences produced inside the runtime render correctly.
+async fn pty_attach(ctx: &AppContext, args: RuntimePtyAttachArgs) -> anyhow::Result<()> {
+    use base64::Engine as _;
+    use futures_util::StreamExt;
+    use std::io::Write;
+
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let response = ctx
+        .api
+        .runtime_pty()
+        .stream(&args.runtime_id, &args.session_id)
+        .await?;
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    let mut exit_code = 0i32;
+
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| anyhow::anyhow!("stream pty output: {e}"))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(separator_index) = buffer.find("\n\n") {
+            let frame = buffer[..separator_index].to_string();
+            buffer.drain(..separator_index + 2);
+
+            for line in frame.lines() {
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let payload: serde_json::Value = serde_json::from_str(data.trim())?;
+                match payload.get("type").and_then(|value| value.as_str()) {
+                    Some("data") => {
+                        let Some(encoded) = payload.get("data").and_then(|value| value.as_str())
+                        else {
+                            continue;
+                        };
+                        let decoded = base64::engine::general_purpose::STANDARD
+                            .decode(encoded)
+                            .map_err(|e| anyhow::anyhow!("decode pty output: {e}"))?;
+                        let mut stdout = std::io::stdout();
+                        stdout.write_all(&decoded)?;
+                        stdout.flush()?;
+                    }
+                    Some("exit") => {
+                        exit_code = payload
+                            .get("exit_code")
+                            .and_then(|value| value.as_i64())
+                            .unwrap_or_default() as i32;
+                    }
+                    Some("error") => {
+                        let message = payload
+                            .get("message")
+                            .and_then(|value| value.as_str())
+                            .unwrap_or("pty output stream failed");
+                        anyhow::bail!(message.to_string());
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    if exit_code != 0 {
+        std::process::exit(exit_code);
+    }
+    Ok(())
+}
+
+async fn pty_kill(ctx: &AppContext, args: RuntimePtyKillArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let resp = ctx
+        .api
+        .runtime_pty()
+        .kill(&args.runtime_id, &args.session_id)
+        .await?;
+    output::print_or_json(ctx.output, &resp, || {
+        output::success(
+            ctx.output,
+            format!("Killed PTY session {}", args.session_id),
+        );
     });
     Ok(())
 }

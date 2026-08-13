@@ -287,6 +287,39 @@ impl<'a> RuntimeApi<'a> {
             .await
     }
 
+    /// `POST /v1/agents/runtime/<id>/code/run?stream=true`
+    ///
+    /// Returns the raw streaming response so the caller can render stdout and
+    /// stderr as the interpreter produces them instead of waiting for the cell
+    /// to finish.
+    pub async fn run_code_stream(
+        &self,
+        runtime_id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<reqwest::Response, ApiError> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/code/run"));
+        let resp = self
+            .client
+            .post(url)
+            .query(&[("stream", "true")])
+            .bearer_auth(self.client.api_key().expose_secret())
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .json(payload)
+            .send()
+            .await
+            .map_err(ApiError::Connection)?;
+
+        let status = resp.status();
+        if status.is_success() {
+            Ok(resp)
+        } else {
+            let body = resp.text().await.unwrap_or_default();
+            Err(ApiError::from_response(status.as_u16(), body))
+        }
+    }
+
     /// `POST /v1/agents/runtime/<id>/ssh/enable`
     pub async fn enable_ssh(
         &self,

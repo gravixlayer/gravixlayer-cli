@@ -226,6 +226,8 @@ pub enum RuntimeCommand {
     Ssh(RuntimeSshArgs),
     /// Upload or download files from a runtime
     Files(RuntimeFilesArgs),
+    /// Manage programmatic PTY sessions inside a runtime
+    Pty(RuntimePtyArgs),
     /// Manage git operations inside a runtime
     Git(RuntimeGitArgs),
     /// Set the idle timeout for a runtime
@@ -409,6 +411,9 @@ pub struct RuntimeRunArgs {
     /// Execution timeout in seconds (sent to backend as `timeout`)
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
+    /// Stream stdout/stderr incrementally using the backend SSE path
+    #[arg(long)]
+    pub stream: bool,
 }
 
 #[derive(Debug, Args)]
@@ -545,6 +550,226 @@ pub enum RuntimeFilesCommand {
     Mkdir(RuntimeFilesMkdirArgs),
     /// Change file permissions
     Chmod(RuntimeFilesChmodArgs),
+    /// Move or rename a path inside a runtime
+    #[command(name = "mv")]
+    Move(RuntimeFilesMoveArgs),
+    /// Copy a file or directory inside a runtime
+    #[command(name = "cp")]
+    Copy(RuntimeFilesCopyArgs),
+    /// Change the owning user and/or group of a path
+    Chown(RuntimeFilesChownArgs),
+    /// Watch a directory for filesystem changes (inotify backed)
+    Watch(RuntimeFilesWatchArgs),
+    /// Find files by name glob and/or content pattern
+    Find(RuntimeFilesFindArgs),
+    /// Replace a pattern across every matching file
+    Replace(RuntimeFilesReplaceArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeFilesMoveArgs {
+    pub runtime_id: String,
+    /// Existing path inside the runtime
+    pub source: String,
+    /// New path inside the runtime
+    pub destination: String,
+    /// Replace the destination if it already exists
+    #[arg(long)]
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeFilesCopyArgs {
+    pub runtime_id: String,
+    /// Existing path inside the runtime
+    pub source: String,
+    /// Destination path inside the runtime
+    pub destination: String,
+    /// Copy directories recursively
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
+    /// Replace the destination if it already exists
+    #[arg(long)]
+    pub overwrite: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeFilesChownArgs {
+    pub runtime_id: String,
+    pub path: String,
+    /// New owning user (name or numeric UID)
+    #[arg(long)]
+    pub user: Option<String>,
+    /// New owning group (name or numeric GID)
+    #[arg(long)]
+    pub group: Option<String>,
+    /// Apply recursively to a directory tree
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeFilesWatchArgs {
+    pub runtime_id: String,
+    /// Directory to watch
+    pub path: String,
+    /// Also watch subdirectories, including ones created later
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeFilesFindArgs {
+    pub runtime_id: String,
+    /// Directory to search under
+    pub path: String,
+    /// Content pattern to match inside files
+    #[arg(long, short = 'p')]
+    pub pattern: Option<String>,
+    /// Shell-style name pattern, for example "*.py"
+    #[arg(long, short = 'g')]
+    pub glob: Option<String>,
+    /// Treat the pattern as a regular expression
+    #[arg(long)]
+    pub regex: bool,
+    /// Match case exactly (default is case-insensitive)
+    #[arg(long)]
+    pub case_sensitive: bool,
+    /// Descend into and match dot-files
+    #[arg(long)]
+    pub include_hidden: bool,
+    /// Stop after this many matches
+    #[arg(long)]
+    pub max_results: Option<u32>,
+    /// Directory recursion limit
+    #[arg(long)]
+    pub max_depth: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeFilesReplaceArgs {
+    pub runtime_id: String,
+    /// Directory to search under
+    pub path: String,
+    /// Pattern to replace
+    pub pattern: String,
+    /// Replacement text (use $1 for capture groups with --regex)
+    pub replacement: String,
+    /// Shell-style name pattern limiting which files are rewritten
+    #[arg(long, short = 'g')]
+    pub glob: Option<String>,
+    /// Treat the pattern as a regular expression
+    #[arg(long)]
+    pub regex: bool,
+    /// Match case exactly (default is case-insensitive)
+    #[arg(long)]
+    pub case_sensitive: bool,
+    /// Descend into and match dot-files
+    #[arg(long)]
+    pub include_hidden: bool,
+    /// Directory recursion limit
+    #[arg(long)]
+    pub max_depth: Option<u32>,
+    /// Report what would change without writing any file
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtyArgs {
+    #[command(subcommand)]
+    pub command: RuntimePtyCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimePtyCommand {
+    /// Create a PTY session that outlives this command
+    Create(RuntimePtyCreateArgs),
+    /// List PTY sessions in a runtime
+    #[command(name = "ls")]
+    List(RuntimePtyListArgs),
+    /// Show details for a single PTY session
+    Get(RuntimePtyGetArgs),
+    /// Write to a session's terminal
+    Send(RuntimePtySendArgs),
+    /// Resize a session's terminal
+    Resize(RuntimePtyResizeArgs),
+    /// Send a POSIX signal to a session (INT, TERM, KILL, HUP)
+    Signal(RuntimePtySignalArgs),
+    /// Attach to a session's output stream (scrollback first, then live)
+    Attach(RuntimePtyAttachArgs),
+    /// Terminate a PTY session
+    Kill(RuntimePtyKillArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtyCreateArgs {
+    pub runtime_id: String,
+    /// Shell binary to launch
+    #[arg(long)]
+    pub shell: Option<String>,
+    /// Initial working directory
+    #[arg(long)]
+    pub workdir: Option<String>,
+    /// Key=Value environment variables
+    #[arg(long = "env", short = 'e', value_name = "KEY=VALUE")]
+    pub env_vars: Vec<String>,
+    /// Terminal width in columns
+    #[arg(long)]
+    pub cols: Option<u32>,
+    /// Terminal height in rows
+    #[arg(long)]
+    pub rows: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtyListArgs {
+    pub runtime_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtyGetArgs {
+    pub runtime_id: String,
+    pub session_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtySendArgs {
+    pub runtime_id: String,
+    pub session_id: String,
+    /// Text to write (reads from stdin if omitted)
+    pub data: Option<String>,
+    /// Do not append a trailing newline
+    #[arg(long)]
+    pub no_newline: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtyResizeArgs {
+    pub runtime_id: String,
+    pub session_id: String,
+    pub cols: u32,
+    pub rows: u32,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtySignalArgs {
+    pub runtime_id: String,
+    pub session_id: String,
+    /// Signal name: INT, TERM, KILL or HUP
+    pub signal: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtyAttachArgs {
+    pub runtime_id: String,
+    pub session_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimePtyKillArgs {
+    pub runtime_id: String,
+    pub session_id: String,
 }
 
 #[derive(Debug, Args)]

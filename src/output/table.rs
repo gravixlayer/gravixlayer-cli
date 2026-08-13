@@ -5,6 +5,7 @@ use comfy_table::{
     presets::UTF8_FULL_CONDENSED, Attribute, Cell, Color, ContentArrangement, Table, TableComponent,
 };
 
+use crate::api::runtime_pty::PtySession;
 use crate::api::types::*;
 
 // ---------------------------------------------------------------------------
@@ -782,6 +783,25 @@ pub fn network_policy_rule_table(rules: &[NetworkPolicyRule]) -> Table {
             Cell::new(port),
             Cell::new(&r.protocol),
             Cell::new(format_relative(r.updated_at.as_deref())),
+        ]);
+    }
+    t
+}
+
+// ---------------------------------------------------------------------------
+// PTY sessions
+// ---------------------------------------------------------------------------
+
+pub fn pty_session_table(sessions: &[PtySession]) -> Table {
+    let mut t = base_table(&["SESSION ID", "STATUS", "PID", "SHELL", "SIZE", "CREATED"]);
+    for s in sessions {
+        t.add_row(vec![
+            Cell::new(&s.session_id),
+            status_cell(&s.status),
+            Cell::new(s.pid.to_string()),
+            Cell::new(&s.shell),
+            Cell::new(format!("{}x{}", s.cols, s.rows)),
+            Cell::new(format_relative(s.created_at.as_deref())),
         ]);
     }
     t

@@ -20,6 +20,7 @@ pub mod retry;
 pub mod runtime;
 pub mod runtime_files;
 pub mod runtime_git;
+pub mod runtime_pty;
 pub mod runtime_service;
 pub mod template;
 pub mod types;
@@ -256,6 +257,10 @@ impl ApiClient {
 
     pub fn runtime_git(&self) -> runtime_git::RuntimeGitApi<'_> {
         runtime_git::RuntimeGitApi::new(self)
+    }
+
+    pub fn runtime_pty(&self) -> runtime_pty::RuntimePtyApi<'_> {
+        runtime_pty::RuntimePtyApi::new(self)
     }
 
     pub fn runtime_service(&self) -> runtime_service::RuntimeServiceApi<'_> {
