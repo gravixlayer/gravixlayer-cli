@@ -48,7 +48,9 @@ fn status_cell(status: &str) -> Cell {
     let cell = Cell::new(status);
     match status {
         "running" | "active" | "completed" | "healthy" => cell.fg(Color::Green),
-        "paused" | "pending" | "starting" | "propagating" => cell.fg(Color::Yellow),
+        "paused" | "pending" | "starting" | "propagating" | "inactive" | "snapshotting" => {
+            cell.fg(Color::Yellow)
+        }
         "failed" | "terminated" | "error" | "deleted" | "unhealthy" => cell.fg(Color::Red),
         _ => cell,
     }
@@ -379,6 +381,97 @@ pub fn template_detail_table(tmpl: &Template) -> Table {
             Some(false) => "false",
             None => "—",
         }),
+    ]);
+    t
+}
+
+// ---------------------------------------------------------------------------
+// Named snapshots
+// ---------------------------------------------------------------------------
+
+pub fn snapshot_table(snapshots: &[Snapshot]) -> Table {
+    let mut t = base_table(&[
+        "ID", "NAME", "KIND", "STATE", "CLOUD", "REGION", "VCPU", "MEM", "CREATED",
+    ]);
+    for snap in snapshots {
+        t.add_row(vec![
+            Cell::new(&snap.id),
+            Cell::new(&snap.name),
+            Cell::new(opt_str(&snap.kind)),
+            status_cell(snap.state.as_deref().unwrap_or("—")),
+            Cell::new(opt_str(&snap.cloud)),
+            Cell::new(opt_str(&snap.region)),
+            Cell::new(opt_u32(snap.vcpu_count)),
+            Cell::new(opt_u64(snap.memory_mb)),
+            Cell::new(format_relative(snap.created_at.as_deref())),
+        ]);
+    }
+    t
+}
+
+pub fn snapshot_detail_table(snap: &Snapshot) -> Table {
+    let mut t = detail_table(&["FIELD", "VALUE"]);
+    t.add_row(vec![Cell::new("id"), Cell::new(&snap.id)]);
+    t.add_row(vec![Cell::new("name"), Cell::new(&snap.name)]);
+    t.add_row(vec![Cell::new("kind"), Cell::new(opt_str(&snap.kind))]);
+    t.add_row(vec![
+        Cell::new("state"),
+        status_cell(snap.state.as_deref().unwrap_or("—")),
+    ]);
+    t.add_row(vec![
+        Cell::new("description"),
+        Cell::new(opt_str(&snap.description)),
+    ]);
+    t.add_row(vec![Cell::new("source"), Cell::new(opt_str(&snap.source))]);
+    t.add_row(vec![
+        Cell::new("is_active"),
+        Cell::new(match snap.is_active {
+            Some(true) => "true",
+            Some(false) => "false",
+            None => "—",
+        }),
+    ]);
+    t.add_row(vec![
+        Cell::new("distribution_status"),
+        Cell::new(opt_str(&snap.distribution_status)),
+    ]);
+    t.add_row(vec![Cell::new("cloud"), Cell::new(opt_str(&snap.cloud))]);
+    t.add_row(vec![Cell::new("region"), Cell::new(opt_str(&snap.region))]);
+    t.add_row(vec![
+        Cell::new("vcpu_count"),
+        Cell::new(opt_u32(snap.vcpu_count)),
+    ]);
+    t.add_row(vec![
+        Cell::new("memory_mb"),
+        Cell::new(opt_u64(snap.memory_mb)),
+    ]);
+    t.add_row(vec![
+        Cell::new("disk_size_mb"),
+        Cell::new(opt_u64(snap.disk_size_mb)),
+    ]);
+    t.add_row(vec![
+        Cell::new("size_bytes"),
+        Cell::new(opt_i64(snap.size_bytes)),
+    ]);
+    t.add_row(vec![
+        Cell::new("source_runtime_id"),
+        Cell::new(opt_str(&snap.source_runtime_id)),
+    ]);
+    t.add_row(vec![
+        Cell::new("source_template_id"),
+        Cell::new(opt_str(&snap.source_template_id)),
+    ]);
+    t.add_row(vec![
+        Cell::new("created"),
+        Cell::new(format_relative(snap.created_at.as_deref())),
+    ]);
+    t.add_row(vec![
+        Cell::new("updated"),
+        Cell::new(format_relative(snap.updated_at.as_deref())),
+    ]);
+    t.add_row(vec![
+        Cell::new("last_used_at"),
+        Cell::new(format_relative(snap.last_used_at.as_deref())),
     ]);
     t
 }

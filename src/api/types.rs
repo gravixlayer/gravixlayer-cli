@@ -110,6 +110,7 @@ pub struct RuntimeMetrics {
 /// Payload for `POST /v1/agents/runtime`.
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateRuntimeRequest {
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub template: String,
     #[serde(rename = "cloud")]
     pub cloud: String,
@@ -128,6 +129,9 @@ pub struct CreateRuntimeRequest {
     pub providers: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub network_policy_ids: Vec<String>,
+    /// Named snapshot id or name. Mutually exclusive with `template`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
 }
 
 /// Payload for `POST /v1/agents/runtime/<id>/timeout`.
@@ -287,6 +291,61 @@ pub struct TemplateSnapshot {
     pub created_at: Option<String>,
     pub cellcore_version: Option<String>,
     pub snapshot_size_bytes: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
+// Named user snapshots (catalog)
+// ---------------------------------------------------------------------------
+
+/// A project-scoped named snapshot from `/v1/agents/snapshots`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Snapshot {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub state: Option<String>,
+    #[serde(default)]
+    pub is_active: Option<bool>,
+    #[serde(default)]
+    pub distribution_status: Option<String>,
+    #[serde(alias = "provider")]
+    pub cloud: Option<String>,
+    pub region: Option<String>,
+    pub vcpu_count: Option<u32>,
+    pub memory_mb: Option<u64>,
+    pub disk_size_mb: Option<u64>,
+    pub visibility: Option<String>,
+    pub size_bytes: Option<i64>,
+    pub source_runtime_id: Option<String>,
+    pub source_template_id: Option<String>,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub last_used_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotList {
+    #[serde(default)]
+    pub snapshots: Vec<Snapshot>,
+    pub total: Option<u64>,
+    pub limit: Option<u32>,
+    pub offset: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateSnapshotRequest {
+    pub name: String,
+    pub runtime_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

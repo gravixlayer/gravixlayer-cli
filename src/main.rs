@@ -88,6 +88,7 @@ async fn dispatch(cli: Cli) -> anyhow::Result<()> {
                 Commands::Config(args) => cmd::config::handle(&mut ctx, args.command).await?,
                 Commands::Runtime(args) => cmd::runtime::handle(&mut ctx, args.command).await?,
                 Commands::Template(args) => cmd::template::handle(&ctx, args.command).await?,
+                Commands::Snapshot(args) => cmd::snapshot::handle(&ctx, args.command).await?,
                 Commands::Provider(args) => cmd::provider::handle(&ctx, args.command).await?,
                 Commands::NetworkPolicy(args) => {
                     cmd::network_policy::handle(&ctx, args.command).await?

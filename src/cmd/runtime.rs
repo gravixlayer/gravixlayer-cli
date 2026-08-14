@@ -59,8 +59,14 @@ async fn create(ctx: &AppContext, args: RuntimeCreateArgs) -> anyhow::Result<()>
     let env_vars = parse_env_vars(&args.env_vars)?;
     let metadata = parse_string_map_json(args.metadata.as_deref(), "metadata")?;
 
+    let template = if args.snapshot.is_some() {
+        String::new()
+    } else {
+        args.template.unwrap_or_else(|| "base-small".to_string())
+    };
+
     let req = CreateRuntimeRequest {
-        template: args.template,
+        template,
         cloud: args.cloud,
         region: args.region,
         timeout: args.timeout,
@@ -70,6 +76,7 @@ async fn create(ctx: &AppContext, args: RuntimeCreateArgs) -> anyhow::Result<()>
         agent_id: args.agent_id,
         providers: args.providers,
         network_policy_ids: args.network_policies,
+        snapshot: args.snapshot,
     };
 
     let spinner = if ctx.output == crate::cli::OutputFormat::Table {

@@ -22,6 +22,7 @@ pub mod runtime_files;
 pub mod runtime_git;
 pub mod runtime_pty;
 pub mod runtime_service;
+pub mod snapshot;
 pub mod template;
 pub mod types;
 
@@ -233,6 +234,10 @@ impl ApiClient {
 
     pub fn template(&self) -> template::TemplateApi<'_> {
         template::TemplateApi::new(self)
+    }
+
+    pub fn snapshot(&self) -> snapshot::SnapshotApi<'_> {
+        snapshot::SnapshotApi::new(self)
     }
 
     pub fn agent(&self) -> agent::AgentApi<'_> {

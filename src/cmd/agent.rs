@@ -1382,6 +1382,7 @@ async fn remote_dev(ctx: &AppContext, args: AgentDevArgs) -> Result<()> {
             agent_id: None,
             providers: Vec::new(),
             network_policy_ids: Vec::new(),
+            snapshot: None,
         })
         .await?;
     spinner.finish_ok(format!("Runtime {} created", runtime.runtime_id));

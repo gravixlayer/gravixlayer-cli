@@ -21,7 +21,7 @@ use std::path::PathBuf;
     name            = "gravixlayer",
     bin_name        = "gravixlayer",
     version,
-    about           = "Manage GravixLayer runtimes, templates, agents, and billing",
+    about           = "Manage GravixLayer runtimes, templates, snapshots, agents, and billing",
     long_about      = None,
     propagate_version = true,
     arg_required_else_help = true,
@@ -82,6 +82,8 @@ pub enum Commands {
     Runtime(RuntimeArgs),
     /// Manage reusable container templates
     Template(TemplateArgs),
+    /// Manage named runtime snapshots
+    Snapshot(SnapshotArgs),
     /// Manage secret providers for sandboxes
     Provider(ProviderArgs),
     /// Manage network policies (egress firewall) for sandboxes
@@ -236,9 +238,12 @@ pub enum RuntimeCommand {
 
 #[derive(Debug, Args)]
 pub struct RuntimeCreateArgs {
-    /// Container template (default: base-small)
-    #[arg(short = 't', long, default_value = "base-small")]
-    pub template: String,
+    /// Container template (default: base-small). Mutually exclusive with --snapshot.
+    #[arg(short = 't', long)]
+    pub template: Option<String>,
+    /// Restore from a named snapshot (id or name). Mutually exclusive with --template.
+    #[arg(long, conflicts_with = "template")]
+    pub snapshot: Option<String>,
     /// Cloud provider
     #[arg(long, default_value = "azure")]
     pub cloud: String,
@@ -1173,6 +1178,94 @@ pub struct TemplateDeleteArgs {
 #[derive(Debug, Args)]
 pub struct TemplateBuildStatusArgs {
     pub build_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// snapshot
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Args)]
+pub struct SnapshotArgs {
+    #[command(subcommand)]
+    pub command: SnapshotCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SnapshotCommand {
+    /// Capture a running runtime into a named snapshot
+    Create(SnapshotCreateArgs),
+    /// List named snapshots
+    List(SnapshotListArgs),
+    /// Get a snapshot by ID or name
+    Get(SnapshotGetArgs),
+    /// Delete a named snapshot
+    Delete(SnapshotDeleteArgs),
+    /// Activate an inactive snapshot
+    Activate(SnapshotActivateArgs),
+    /// Deactivate a snapshot (stops new creates)
+    Deactivate(SnapshotDeactivateArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotCreateArgs {
+    /// Project-unique snapshot name
+    #[arg(long)]
+    pub name: String,
+    /// Source runtime UUID
+    #[arg(long)]
+    pub runtime_id: String,
+    /// hot (memory + disk) or cold (disk only). Defaults to cold.
+    #[arg(long, default_value = "cold")]
+    pub kind: String,
+    /// Optional description
+    #[arg(long)]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotListArgs {
+    #[arg(long, default_value_t = 20)]
+    pub limit: u32,
+    #[arg(long, default_value_t = 0)]
+    pub offset: u32,
+    /// Filter: hot, cold, or all
+    #[arg(long)]
+    pub kind: Option<String>,
+    /// Filter by source runtime UUID
+    #[arg(long)]
+    pub runtime_id: Option<String>,
+    /// Filter by catalog state
+    #[arg(long)]
+    pub state: Option<String>,
+    /// Filter by source: runtime, template, or fork
+    #[arg(long)]
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotGetArgs {
+    /// Snapshot UUID or project-unique name
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotDeleteArgs {
+    /// Snapshot UUID or project-unique name
+    pub id: String,
+    #[arg(long, short = 'y')]
+    pub yes: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotActivateArgs {
+    /// Snapshot UUID or project-unique name
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotDeactivateArgs {
+    /// Snapshot UUID or project-unique name
+    pub id: String,
 }
 
 // ---------------------------------------------------------------------------

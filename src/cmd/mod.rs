@@ -10,6 +10,7 @@ pub mod network_policy;
 pub mod package;
 pub mod provider;
 pub mod runtime;
+pub mod snapshot;
 pub mod template;
 pub mod update;
 pub mod validate;
