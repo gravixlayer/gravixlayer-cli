@@ -58,14 +58,13 @@ git add Cargo.toml Cargo.lock CHANGELOG.md \
   .github/workflows/release.yml
 git add -u
 
-if ! git diff --cached --name-only | grep -qx 'Cargo.lock'; then
-  echo "ERROR: Cargo.lock is not staged — lockfile was not synced. Aborting." >&2
-  exit 1
+# Cargo.toml / Cargo.lock may already be at this version (fmt/clippy re-tag).
+# set-version.sh already verified both and ran `cargo metadata --locked`.
+if git diff --cached --quiet; then
+  echo "Already at ${VER}; no release-file changes to commit."
+else
+  git commit -m "chore: release ${VER}"
 fi
-# Cargo.toml may already be at the target version from a previous attempt;
-# Cargo.lock sync is the critical gate for --locked CI builds.
-
-git commit -m "chore: release ${VER}"
 git push origin HEAD
 
 # Final gate — same checks Release CI runs before building.

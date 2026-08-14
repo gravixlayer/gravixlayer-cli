@@ -11,12 +11,12 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
-## [Unreleased]
 ## [0.1.3] - 2026-08-14
+
 ### Added
+
 - `snapshot create|list|get|delete|activate|deactivate`
 - `runtime create --snapshot` (mutually exclusive with `--template`)
-
 
 ## [0.1.2] - 2026-08-13
 
