@@ -48,7 +48,11 @@ async fn create(ctx: &AppContext, args: SnapshotCreateArgs) -> anyhow::Result<()
 }
 
 async fn list(ctx: &AppContext, args: SnapshotListArgs) -> anyhow::Result<()> {
-    let kind = args.kind.as_deref().map(str::trim).filter(|k| !k.is_empty());
+    let kind = args
+        .kind
+        .as_deref()
+        .map(str::trim)
+        .filter(|k| !k.is_empty());
     if let Some(kind) = kind {
         if !matches!(kind, "hot" | "cold" | "all") {
             anyhow::bail!("invalid --kind '{kind}': expected hot, cold, or all");

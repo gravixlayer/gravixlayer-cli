@@ -43,10 +43,10 @@ impl<'a> SnapshotApi<'a> {
         let url = self.client.agents_url("snapshots");
         self.client
             .execute("snapshot.list", || {
-                let mut req = self.client.get(url.clone()).query(&[
-                    ("limit", limit.to_string()),
-                    ("offset", offset.to_string()),
-                ]);
+                let mut req = self
+                    .client
+                    .get(url.clone())
+                    .query(&[("limit", limit.to_string()), ("offset", offset.to_string())]);
                 if let Some(kind) = kind {
                     req = req.query(&[("kind", kind)]);
                 }
