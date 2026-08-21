@@ -2227,8 +2227,8 @@ mod tests {
             no_reload: false,
             target: None,
             runtime_sync: false,
-            cloud: "azure".to_string(),
-            region: "eastus2".to_string(),
+            cloud: "aws".to_string(),
+            region: "us-east-1".to_string(),
             watch_dir: "app".to_string(),
         };
 
@@ -2404,8 +2404,8 @@ mod tests {
             no_reload: false,
             target: Some("deep_agent".to_string()),
             runtime_sync: false,
-            cloud: "azure".to_string(),
-            region: "eastus2".to_string(),
+            cloud: "aws".to_string(),
+            region: "us-east-1".to_string(),
             watch_dir: "app".to_string(),
         };
 

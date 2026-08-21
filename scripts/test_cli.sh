@@ -24,8 +24,8 @@ BINARY="${GRAVIXLAYER_BINARY:-gravixlayer}"
 SKIP_CLEANUP="${SKIP_CLEANUP:-0}"
 SKIP_TEMPLATE_BUILD="${SKIP_TEMPLATE_BUILD:-1}"
 TEMPLATE="${GRAVIXLAYER_TEMPLATE:-base-small}"
-PROVIDER="${GRAVIXLAYER_PROVIDER:-azure}"
-REGION="${GRAVIXLAYER_REGION:-eastus2}"
+PROVIDER="${GRAVIXLAYER_PROVIDER:-aws}"
+REGION="${GRAVIXLAYER_REGION:-us-east-1}"
 LOG_DIR="$(mktemp -d /tmp/gl-cli-test-XXXXXX)"
 RUNTIME_ID=""  # set once a runtime is created and reused across tests
 

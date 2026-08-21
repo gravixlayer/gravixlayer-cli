@@ -5,6 +5,7 @@
 // with ALL flags required by COMMANDS.md.  Handler dispatch lives in main.rs.
 // Individual handler implementations live in the cmd/ module tree.
 
+use crate::config::ResolvedConfig;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use std::path::PathBuf;
@@ -245,10 +246,10 @@ pub struct RuntimeCreateArgs {
     #[arg(long, conflicts_with = "template")]
     pub snapshot: Option<String>,
     /// Cloud provider
-    #[arg(long, default_value = "azure")]
+    #[arg(long, default_value = ResolvedConfig::DEFAULT_CLOUD)]
     pub cloud: String,
     /// Deployment region
-    #[arg(long, default_value = "eastus2")]
+    #[arg(long, default_value = ResolvedConfig::DEFAULT_REGION)]
     pub region: String,
     /// Idle timeout in seconds (0 = no timeout)
     #[arg(long)]
@@ -1595,10 +1596,10 @@ pub struct AgentDevArgs {
     #[arg(long)]
     pub runtime_sync: bool,
     /// Cloud provider
-    #[arg(long, default_value = "azure")]
+    #[arg(long, default_value = ResolvedConfig::DEFAULT_CLOUD)]
     pub cloud: String,
     /// Deployment region
-    #[arg(long, default_value = "eastus2")]
+    #[arg(long, default_value = ResolvedConfig::DEFAULT_REGION)]
     pub region: String,
     /// Subdirectory to watch for changes (default: app/)
     #[arg(long, default_value = "app")]

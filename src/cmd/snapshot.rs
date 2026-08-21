@@ -29,7 +29,8 @@ async fn create(ctx: &AppContext, args: SnapshotCreateArgs) -> anyhow::Result<()
         anyhow::bail!("invalid --kind '{kind}': expected hot or cold");
     }
 
-    let spinner = output::Spinner::new(format!("Capturing {} snapshot {}…", kind, args.name));
+    let spinner = (ctx.output == crate::cli::OutputFormat::Table)
+        .then(|| output::Spinner::new(format!("Capturing {} snapshot {}…", kind, args.name)));
     let snap = ctx
         .api
         .snapshot()
@@ -40,7 +41,9 @@ async fn create(ctx: &AppContext, args: SnapshotCreateArgs) -> anyhow::Result<()
             kind: Some(kind),
         })
         .await?;
-    spinner.finish_ok(format!("Snapshot {} created", snap.id));
+    if let Some(sp) = spinner {
+        sp.finish_ok(format!("Snapshot {} created", snap.id));
+    }
     output::print_or_json(ctx.output, &snap, || {
         println!("{}", table::snapshot_detail_table(&snap));
     });

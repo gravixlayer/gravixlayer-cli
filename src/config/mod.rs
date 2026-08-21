@@ -11,8 +11,8 @@
 //   [profiles.default]
 //   api_key        = "grx_..."           # optional — keyring is preferred
 //   base_url       = "https://api.gravixlayer.ai"
-//   default_cloud  = "azure"             # renamed from default_provider
-//   default_region = "eastus2"
+//   default_cloud  = "aws"               # renamed from default_provider
+//   default_region = "us-east-1"
 //   default_template = "base-small"
 //
 //   [profiles.prod]
@@ -101,8 +101,8 @@ pub struct ResolvedConfig {
 
 impl ResolvedConfig {
     pub const DEFAULT_BASE_URL: &'static str = "https://api.gravixlayer.ai";
-    pub const DEFAULT_CLOUD: &'static str = "azure";
-    pub const DEFAULT_REGION: &'static str = "eastus2";
+    pub const DEFAULT_CLOUD: &'static str = "aws";
+    pub const DEFAULT_REGION: &'static str = "us-east-1";
     pub const DEFAULT_TEMPLATE: &'static str = "base-small";
 }
 

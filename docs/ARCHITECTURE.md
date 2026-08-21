@@ -10,7 +10,7 @@ and smart defaults derived from the project config file.
 ## Design Principles
 
 1. **Minimal input** — `grx runtime create` works with zero flags. All defaults mirror the
-   Python SDK: `template=base-small`, `cloud=azure`, `region=eastus2`.
+   Python SDK: `template=base-small`, `cloud=aws`, `region=us-east-1`.
 2. **AppContext pattern** — A single `AppContext` struct (api client + config + project +
    output mode) is built once in `main.rs` and passed as `&AppContext` to every command.
    No globals, no thread-locals.
