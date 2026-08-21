@@ -11,6 +11,12 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-08-20
+
+### Added
+
+- `updated default cloud and region to aws and us-east-1`
+
 ## [0.1.3] - 2026-08-14
 
 ### Added
