@@ -11,6 +11,10 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-08-20
+
+- Fixed Template pipeline bug
+
 ## [0.1.4] - 2026-08-20
 
 ### Added
