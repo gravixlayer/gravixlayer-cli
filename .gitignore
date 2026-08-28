@@ -24,3 +24,4 @@ __pycache__/
 *.profraw
 lcov.info
 coverage/
+.cursor/
