@@ -208,8 +208,9 @@ grx runtime exec abc123 bash -c "ls -la /app"
 
 ### `grx runtime run <id>`
 
-Evaluate code or a script file inside the runtime's persistent kernel context.
-Variables defined in one `run` call are available in subsequent calls on the same runtime.
+Evaluate code or a script file inside the runtime. Each `run` is one-shot:
+variables from one call are not available in the next. Create a context with
+`grx runtime context` and pass it when you need interpreter state to persist.
 
 ```
 grx runtime run <id> --code <EXPR>
@@ -223,7 +224,6 @@ Options:
 
 Examples:
   grx runtime run abc123 --code "x = 42; print(f'x = {x}')"
-  grx runtime run abc123 --code "print(f'x still = {x}')"   # x is preserved
   grx runtime run abc123 --file ./analysis.py
 ```
 
@@ -244,7 +244,8 @@ Terminal size is synced on connect and on SIGWINCH (window resize).
 
 ### `grx runtime context`
 
-Manage persistent kernel execution contexts within a runtime.
+Manage persistent execution contexts within a runtime. Pass the returned
+`context_id` to keep interpreter state across `run` calls.
 
 ```
 grx runtime context create <runtime-id> [--name <NAME>]

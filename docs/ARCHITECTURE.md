@@ -124,7 +124,7 @@ Mirrors the Python SDK's 5 error types:
 |---|---|---|
 | `ApiError::Auth` | 401 | No |
 | `ApiError::RateLimit { retry_after }` | 429 | Yes (after Retry-After delay) |
-| `ApiError::BadRequest { body }` | 400–499 (excl. 401/429) | No |
+| `ApiError::BadRequest { body }` | 400–499 (excl. 401/429), including quota 403 | No |
 | `ApiError::Server { status, body }` | 5xx | Yes |
 | `ApiError::Connection { source }` | Network error | Yes |
 

@@ -11,6 +11,11 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-08-29
+### Changed
+- Occupancy quota is HTTP 403 and is not retried. 429 is only the create-rate
+  window and still retries with backoff.
+
 ## [0.1.5] - 2026-08-20
 
 - Fixed Template pipeline bug

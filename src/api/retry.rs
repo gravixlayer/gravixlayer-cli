@@ -143,4 +143,19 @@ mod tests {
         assert!(result.is_err());
         assert_eq!(calls, 1, "non-retryable should not be retried");
     }
+
+    #[tokio::test]
+    async fn retry_does_not_replay_403() {
+        let mut calls = 0u32;
+        let result: Result<u32, ApiError> = retry("test", |_| {
+            calls += 1;
+            async { Err(ApiError::from_response(403, "forbidden".into())) }
+        })
+        .await;
+        assert!(matches!(
+            result,
+            Err(ApiError::BadRequest { status: 403, .. })
+        ));
+        assert_eq!(calls, 1);
+    }
 }

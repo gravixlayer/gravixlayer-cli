@@ -177,12 +177,10 @@ impl ApiClient {
             async move {
                 debug!(attempt, "sending request (empty response expected)");
                 let resp: Response = builder.send().await.map_err(ApiError::Connection)?;
-                let status = resp.status();
-                if status.is_success() {
+                if resp.status().is_success() {
                     return Ok(());
                 }
-                let body = resp.text().await.unwrap_or_default();
-                Err(ApiError::from_response(status.as_u16(), body))
+                Err(ApiError::from_http(resp).await)
             }
         })
         .await
@@ -190,12 +188,10 @@ impl ApiClient {
 
     /// Parse an HTTP response into `T`, mapping non-success status codes to `ApiError`.
     async fn parse_response<T: DeserializeOwned>(resp: Response) -> Result<T, ApiError> {
-        let status = resp.status();
-        if status.is_success() {
+        if resp.status().is_success() {
             resp.json::<T>().await.map_err(ApiError::Deserialization)
         } else {
-            let body = resp.text().await.unwrap_or_default();
-            Err(ApiError::from_response(status.as_u16(), body))
+            Err(ApiError::from_http(resp).await)
         }
     }
 

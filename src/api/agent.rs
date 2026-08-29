@@ -66,14 +66,12 @@ impl<'a> AgentApi<'a> {
             .await
             .map_err(ApiError::Connection)?;
 
-        let status = resp.status();
-        if status.is_success() {
+        if resp.status().is_success() {
             resp.json::<AgentBuildResponse>()
                 .await
                 .map_err(ApiError::Deserialization)
         } else {
-            let body = resp.text().await.unwrap_or_default();
-            Err(ApiError::from_response(status.as_u16(), body))
+            Err(ApiError::from_http(resp).await)
         }
     }
 
@@ -210,12 +208,10 @@ impl<'a> AgentApi<'a> {
             .await
             .map_err(ApiError::Connection)?;
 
-        let status = resp.status();
-        if status.is_success() {
+        if resp.status().is_success() {
             Ok(resp)
         } else {
-            let body = resp.text().await.unwrap_or_default();
-            Err(ApiError::from_response(status.as_u16(), body))
+            Err(ApiError::from_http(resp).await)
         }
     }
 
