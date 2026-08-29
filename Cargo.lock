@@ -1277,7 +1277,7 @@ dependencies = [
 
 [[package]]
 name = "gravixlayer"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "a2a-lf",
  "a2a-server-lf",
