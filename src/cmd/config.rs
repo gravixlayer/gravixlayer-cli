@@ -37,13 +37,10 @@ async fn set(ctx: &mut AppContext, args: ConfigSetArgs) -> anyhow::Result<()> {
     match args.key.as_str() {
         "base_url" => {
             // Validate: the client enforces HTTPS for non-WebSocket requests.
+            // http:// is accepted only for a loopback API (local `gravix-api`
+            // dev) — matching the client's `https_only` exemption.
             let v = value.trim();
-            if !v.starts_with("https://") {
-                anyhow::bail!("base_url must start with https://");
-            }
-            if v.contains(|c: char| c.is_ascii_control()) {
-                anyhow::bail!("base_url contains invalid characters");
-            }
+            validate_base_url(v)?;
             profile.base_url = Some(v.to_string());
         }
         "default_cloud" | "default_provider" => profile.default_cloud = Some(value.clone()),
@@ -118,4 +115,47 @@ async fn use_profile(ctx: &mut AppContext, args: ConfigUseProfileArgs) -> anyhow
     ctx.user_config.save()?;
     output::success(ctx.output, format!("Active profile set to '{}'", args.name));
     Ok(())
+}
+
+/// `base_url` must be HTTPS, except a loopback API (local `gravix-api` dev has
+/// no TLS). The client additionally enforces this via `https_only`, so this
+/// check and `crate::api::is_http_loopback` must stay aligned.
+fn validate_base_url(v: &str) -> anyhow::Result<()> {
+    if v.contains(|c: char| c.is_ascii_control()) {
+        anyhow::bail!("base_url contains invalid characters");
+    }
+    if v.starts_with("https://") || crate::api::is_http_loopback(v) {
+        return Ok(());
+    }
+    anyhow::bail!("base_url must be https:// — http:// is allowed only for loopback (localhost, 127.0.0.1, [::1])");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_base_url;
+
+    #[test]
+    fn base_url_accepts_https_and_loopback_http() {
+        for ok in [
+            "https://api.gravixlayer.ai",
+            "https://localhost:8443",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://[::1]:8000",
+            "http://127.34.56.78",
+        ] {
+            assert!(validate_base_url(ok).is_ok(), "{ok}");
+        }
+        for bad in [
+            "http://api.gravixlayer.ai",
+            "http://192.168.1.15:8000",
+            "http://localhost.evil.com",
+            "http://user@localhost@evil.com",
+            "localhost:8000",
+            "ftp://localhost:21",
+            "https://bad\nhost",
+        ] {
+            assert!(validate_base_url(bad).is_err(), "{bad}");
+        }
+    }
 }

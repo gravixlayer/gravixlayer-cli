@@ -11,6 +11,16 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+### Fixed
+- `GRAVIXLAYER_BASE_URL` / `config set base_url` now accept `http://` for a
+  loopback API (`localhost`, `127.0.0.0/8`, `[::1]`), so a local `gravix-api`
+  dev server is reachable. Non-loopback `http://` is still rejected — the
+  client keeps `https_only` enforcement off-box.
+
+### Changed
+- `rust-toolchain.toml` now includes the `rust-analyzer` component so the
+  editor uses the toolchain-matched analyzer instead of the extension binary.
+
 ## [0.1.6] - 2026-08-29
 ### Changed
 - Occupancy quota is HTTP 403 and is not retried. 429 is only the create-rate

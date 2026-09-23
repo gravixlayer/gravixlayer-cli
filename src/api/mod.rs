@@ -37,6 +37,25 @@ use error::ApiError;
 use retry::retry;
 
 const DEFAULT_BASE_URL: &str = "https://api.gravixlayer.ai";
+
+/// Plaintext HTTP is only acceptable against a loopback API — a local
+/// `gravix-api` dev process has no TLS. Every non-loopback base URL keeps
+/// `https_only` enforcement so credentials never ride cleartext off-box.
+pub(crate) fn is_http_loopback(base_url: &str) -> bool {
+    let Ok(u) = url::Url::parse(base_url) else {
+        return false;
+    };
+    if u.scheme() != "http" {
+        return false;
+    }
+    match u.host() {
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        Some(url::Host::Domain(d)) => d.eq_ignore_ascii_case("localhost"),
+        None => false,
+    }
+}
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default request timeout.  Raised to 300s to accommodate large archive
 /// uploads (e.g. `agent build`) which can easily exceed 60s on slow networks.
@@ -72,9 +91,11 @@ impl ApiClient {
             header::HeaderValue::from_static("application/json"),
         );
 
+        let base_url = base_url.unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+
         let http = Client::builder()
             .use_rustls_tls()
-            .https_only(true)
+            .https_only(!is_http_loopback(&base_url))
             .user_agent(USER_AGENT)
             .default_headers(default_headers)
             .connect_timeout(CONNECT_TIMEOUT)
@@ -88,7 +109,7 @@ impl ApiClient {
         Ok(Self {
             http,
             api_key,
-            base_url: base_url.unwrap_or_else(|| DEFAULT_BASE_URL.to_string()),
+            base_url,
         })
     }
 
@@ -308,5 +329,54 @@ impl ApiClient {
     #[allow(dead_code)]
     pub fn base_url(&self) -> &str {
         &self.base_url
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn http_loopback_detection() {
+        for ok in [
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+            "http://[::1]:8000",
+            "http://127.34.56.78:9",
+        ] {
+            assert!(is_http_loopback(ok), "{ok}");
+        }
+        for bad in [
+            "https://localhost:8000",
+            "http://api.gravixlayer.ai",
+            "http://192.168.1.15:8000",
+            "http://localhost.evil.com",
+            "localhost:8000",
+        ] {
+            assert!(!is_http_loopback(bad), "{bad}");
+        }
+    }
+
+    #[tokio::test]
+    async fn client_permits_cleartext_only_on_loopback() {
+        let key = SecretString::from("test-key");
+        // Loopback http: scheme allowed — failure is the refused connection.
+        let local = ApiClient::new(key.clone(), Some("http://127.0.0.1:1".into())).unwrap();
+        let err = local
+            .http_client()
+            .get("http://127.0.0.1:1/v1/x")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(err.is_connect(), "expected connect error, got {err}");
+        // Non-loopback http: rejected by https_only before any I/O.
+        let remote = ApiClient::new(key, Some("http://203.0.113.9".into())).unwrap();
+        let err = remote
+            .http_client()
+            .get("http://203.0.113.9/v1/x")
+            .send()
+            .await
+            .unwrap_err();
+        assert!(err.is_builder(), "expected scheme rejection, got {err}");
     }
 }

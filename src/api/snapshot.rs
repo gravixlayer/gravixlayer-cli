@@ -4,8 +4,7 @@ use std::time::Duration;
 
 use super::{error::ApiError, types::*, ApiClient};
 
-/// Capture can pause the guest, pack overlay extents, and write a Full
-/// Firecracker snapshot. Matches the control-plane 10-minute gRPC deadline.
+/// Capture writes disk (and memory for hot). Matches the API's 10-minute budget.
 const SNAPSHOT_CREATE_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub struct SnapshotApi<'a> {
