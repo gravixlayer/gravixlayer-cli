@@ -10,7 +10,7 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 ## [Unreleased]
-
+## [0.1.7] - 2026-09-23
 ### Fixed
 - `GRAVIXLAYER_BASE_URL` / `config set base_url` now accept `http://` for a
   loopback API (`localhost`, `127.0.0.0/8`, `[::1]`), so a local `gravix-api`
