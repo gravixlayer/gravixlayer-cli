@@ -109,6 +109,106 @@ impl<'a> RuntimeApi<'a> {
     }
 
     // ------------------------------------------------------------------
+    // Fork
+    // ------------------------------------------------------------------
+
+    /// `POST /v1/agents/runtime/<id>/fork`
+    ///
+    /// Starts `count` children from one capture. `payload` carries the shared
+    /// fork body — `count`, `timeout_seconds`, `persist_snapshot`, `name`,
+    /// `env_vars`, `metadata` — same wire fields the SDKs send.
+    pub async fn fork(
+        &self,
+        runtime_id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<ForkResponse, ApiError> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/fork"));
+        self.client
+            .execute("runtime.fork", || {
+                self.client.post(url.clone()).json(payload)
+            })
+            .await
+    }
+
+    // ------------------------------------------------------------------
+    // Commands
+    // ------------------------------------------------------------------
+
+    /// `GET /v1/agents/runtime/<id>/commands`
+    pub async fn list_commands(&self, runtime_id: &str) -> Result<CommandList, ApiError> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/commands"));
+        self.client
+            .execute("runtime.commands.list", || self.client.get(url.clone()))
+            .await
+    }
+
+    /// `GET /v1/agents/runtime/<id>/commands/<pid>`
+    pub async fn get_command(&self, runtime_id: &str, pid: u32) -> Result<CommandInfo, ApiError> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/commands/{pid}"));
+        self.client
+            .execute("runtime.commands.get", || self.client.get(url.clone()))
+            .await
+    }
+
+    /// `DELETE /v1/agents/runtime/<id>/commands/<pid>?signal=`
+    ///
+    /// `signal` is one of KILL/TERM/INT/HUP; the server defaults to KILL.
+    pub async fn kill_command(
+        &self,
+        runtime_id: &str,
+        pid: u32,
+        signal: Option<&str>,
+    ) -> Result<CommandInfo, ApiError> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/commands/{pid}"));
+        let signal = signal.map(str::to_string);
+        self.client
+            .execute("runtime.commands.kill", || {
+                let req = self.client.delete(url.clone());
+                match &signal {
+                    Some(signal) => req.query(&[("signal", signal)]),
+                    None => req,
+                }
+            })
+            .await
+    }
+
+    /// `GET /v1/agents/runtime/<id>/commands/<pid>/stream`
+    ///
+    /// Returns the raw SSE response so the caller can render scrollback and
+    /// live output — same frame format as `exec_command_stream`.
+    pub async fn command_stream(
+        &self,
+        runtime_id: &str,
+        pid: u32,
+    ) -> Result<reqwest::Response, ApiError> {
+        let url = self
+            .client
+            .agents_url(&format!("runtime/{runtime_id}/commands/{pid}/stream"));
+        let resp = self
+            .client
+            .get(url)
+            .bearer_auth(self.client.api_key().expose_secret())
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .send()
+            .await
+            .map_err(ApiError::Connection)?;
+
+        if resp.status().is_success() {
+            Ok(resp)
+        } else {
+            Err(ApiError::from_http(resp).await)
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Set timeout
     // ------------------------------------------------------------------
 

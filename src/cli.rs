@@ -235,6 +235,10 @@ pub enum RuntimeCommand {
     Git(RuntimeGitArgs),
     /// Set the idle timeout for a runtime
     Timeout(RuntimeTimeoutArgs),
+    /// Fork a running runtime into independent children
+    Fork(RuntimeForkArgs),
+    /// Inspect and signal background commands inside a runtime
+    Commands(RuntimeCommandsArgs),
 }
 
 #[derive(Debug, Args)]
@@ -397,20 +401,34 @@ pub struct RuntimeExecArgs {
     /// Key=Value environment variables
     #[arg(long = "env", short = 'e', value_name = "KEY=VALUE")]
     pub env_vars: Vec<String>,
-    /// Execution timeout in seconds
+    /// Execution timeout in seconds. `0` with `--background` sets no deadline.
     #[arg(long, default_value_t = 300)]
     pub timeout: u64,
     /// Stream stdout/stderr incrementally using the backend SSE path
     #[arg(long)]
     pub stream: bool,
+    /// Return as soon as the command is running. Prints the command record, including its pid.
+    #[arg(long)]
+    pub background: bool,
 }
 
 #[derive(Debug, Args)]
 pub struct RuntimeRunArgs {
     /// Runtime ID (UUID)
     pub id: String,
-    /// Path to script file to upload and run
-    pub script: PathBuf,
+    /// Path to script file to upload and run. Omit when --code is given.
+    #[arg(conflicts_with = "code")]
+    pub script: Option<PathBuf>,
+    /// Inline code to execute (alternative to a script file)
+    #[arg(long, short = 'c', value_name = "CODE")]
+    pub code: Option<String>,
+    /// Language: python, javascript, typescript, or bash
+    /// (inferred from the script extension when omitted)
+    #[arg(long)]
+    pub language: Option<String>,
+    /// Persistent code context to execute in
+    #[arg(long)]
+    pub context_id: Option<String>,
     /// Key=Value environment variables
     #[arg(long = "env", short = 'e', value_name = "KEY=VALUE")]
     pub env_vars: Vec<String>,
@@ -714,6 +732,9 @@ pub struct RuntimePtyCreateArgs {
     /// Shell binary to launch
     #[arg(long)]
     pub shell: Option<String>,
+    /// Arguments passed to the shell (repeatable, applied in order)
+    #[arg(long = "arg", value_name = "ARG")]
+    pub args: Vec<String>,
     /// Initial working directory
     #[arg(long)]
     pub workdir: Option<String>,
@@ -947,6 +968,9 @@ pub struct RuntimeGitFetchArgs {
     /// Token for a private HTTPS remote; used for this command only
     #[arg(long, env = "GRAVIXLAYER_GIT_TOKEN")]
     pub auth_token: Option<String>,
+    /// Server-side deadline for the fetch, in seconds
+    #[arg(long)]
+    pub timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -993,6 +1017,9 @@ pub struct RuntimeGitPushArgs {
     /// Token for a private HTTPS remote; takes precedence over --username/--password
     #[arg(long, env = "GRAVIXLAYER_GIT_TOKEN")]
     pub auth_token: Option<String>,
+    /// Server-side deadline for the push, in seconds
+    #[arg(long)]
+    pub timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -1032,6 +1059,9 @@ pub struct RuntimeGitCloneArgs {
     /// stored in the checkout, so later pull/fetch/push need their own token
     #[arg(long, env = "GRAVIXLAYER_GIT_TOKEN")]
     pub auth_token: Option<String>,
+    /// Server-side deadline for the clone, in seconds
+    #[arg(long)]
+    pub timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -1047,6 +1077,9 @@ pub struct RuntimeGitPullArgs {
     /// Token for a private HTTPS remote; used for this command only
     #[arg(long, env = "GRAVIXLAYER_GIT_TOKEN")]
     pub auth_token: Option<String>,
+    /// Server-side deadline for the pull, in seconds
+    #[arg(long)]
+    pub timeout_seconds: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -1054,6 +1087,73 @@ pub struct RuntimeTimeoutArgs {
     pub id: String,
     /// New timeout in seconds
     pub seconds: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeForkArgs {
+    /// Runtime ID (UUID) to fork — must be running
+    pub runtime_id: String,
+    /// Number of children to start (1-100)
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=100))]
+    pub count: u32,
+    /// Per-child idle timeout in seconds
+    #[arg(long)]
+    pub timeout: Option<u64>,
+    /// Keep the fork's capture as a named snapshot for later reuse
+    #[arg(long)]
+    pub persist_snapshot: bool,
+    /// Name for the persisted snapshot (requires --persist-snapshot)
+    #[arg(long, requires = "persist_snapshot")]
+    pub name: Option<String>,
+    /// Key=Value environment overrides applied on the children (repeatable)
+    #[arg(long = "env", short = 'e', value_name = "KEY=VALUE")]
+    pub env_vars: Vec<String>,
+    /// JSON metadata merged over the parent's metadata on the children
+    #[arg(long)]
+    pub metadata: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeCommandsArgs {
+    #[command(subcommand)]
+    pub command: RuntimeCommandsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimeCommandsCommand {
+    /// List tracked commands (running and finished)
+    List(RuntimeCommandsIdArgs),
+    /// Show one tracked command by PID
+    Get(RuntimeCommandsPidArgs),
+    /// Signal a command (server defaults to KILL)
+    Kill(RuntimeCommandsKillArgs),
+    /// Attach to a command's output stream (scrollback first, then live)
+    Attach(RuntimeCommandsPidArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeCommandsIdArgs {
+    /// Runtime ID (UUID)
+    pub runtime_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeCommandsPidArgs {
+    /// Runtime ID (UUID)
+    pub runtime_id: String,
+    /// Command PID
+    pub pid: u32,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeCommandsKillArgs {
+    /// Runtime ID (UUID)
+    pub runtime_id: String,
+    /// Command PID
+    pub pid: u32,
+    /// POSIX signal to send: KILL, TERM, INT, or HUP
+    #[arg(long, value_parser = ["KILL", "TERM", "INT", "HUP"])]
+    pub signal: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1205,6 +1305,8 @@ pub enum SnapshotCommand {
     Activate(SnapshotActivateArgs),
     /// Deactivate a snapshot (stops new creates)
     Deactivate(SnapshotDeactivateArgs),
+    /// Start runtimes from a named snapshot — no capture, parent not needed
+    Fork(SnapshotForkArgs),
 }
 
 #[derive(Debug, Args)]
@@ -1267,6 +1369,24 @@ pub struct SnapshotActivateArgs {
 pub struct SnapshotDeactivateArgs {
     /// Snapshot UUID or project-unique name
     pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct SnapshotForkArgs {
+    /// Snapshot UUID or project-unique name
+    pub id: String,
+    /// Number of runtimes to start (1-100)
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=100))]
+    pub count: u32,
+    /// Per-runtime idle timeout in seconds
+    #[arg(long)]
+    pub timeout: Option<u64>,
+    /// Key=Value environment overrides applied on the children (repeatable)
+    #[arg(long = "env", short = 'e', value_name = "KEY=VALUE")]
+    pub env_vars: Vec<String>,
+    /// JSON metadata applied on the children
+    #[arg(long)]
+    pub metadata: Option<String>,
 }
 
 // ---------------------------------------------------------------------------

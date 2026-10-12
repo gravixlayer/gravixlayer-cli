@@ -10,6 +10,39 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 ## [Unreleased]
+## [0.1.8] - 2026-10-12
+### Added
+- `runtime fork` starts `count` children from one capture — `--count` (1-100),
+  `--timeout`, `--env`, `--metadata`, and `--persist-snapshot`/`--name` for the
+  persisted capture. Per-child failures print to stderr without failing the
+  batch; the command fails when no child starts.
+- `snapshot fork` starts `count` runtimes from a named snapshot — no capture
+  runs and the source runtime does not need to be alive.
+- `runtime commands` manages background commands: `list`, `get <pid>`,
+  `kill <pid> [--signal KILL|TERM|INT|HUP]` (server default KILL), and
+  `attach <pid>` which streams scrollback then live output — the same frames
+  `exec --stream` renders.
+- `runtime run` accepts `--code`/`-c` for inline code (alternative to a script
+  path), `--language` to override extension inference, and `--context-id` to
+  execute inside a persistent code context.
+- `runtime pty create` accepts `--arg` for shell arguments (repeatable).
+- `runtime git clone`/`pull`/`push`/`fetch` accept `--timeout-seconds` — a
+  per-operation server-side deadline (default 300s, maximum 900s) so remote
+  operations fail with a timeout error instead of holding the request.
+
+### Fixed
+- Retry now matches the SDK policy: 429 retries on any method, while
+  502/503/504 and connection errors retry only on replayable methods
+  (GET/HEAD/PUT/DELETE/OPTIONS). A POST that may have committed server-side
+  can no longer be replayed by the retry loop.
+- `runtime code-context create`/`get` no longer fail to deserialize the API
+  response. The server emits the context id twice (`id` and `context_id`,
+  same value), and the serde `alias` rejected the response as a duplicate
+  field. Both keys are now read; `context_id` wins, matching the SDKs.
+
+### Added
+- `runtime exec --background` starts a command and prints its record, including the pid, without waiting for it to exit. `--timeout 0` sets no deadline. `--background` cannot be combined with `--stream`.
+
 ## [0.1.7] - 2026-09-23
 ### Fixed
 - `GRAVIXLAYER_BASE_URL` / `config set base_url` now accept `http://` for a

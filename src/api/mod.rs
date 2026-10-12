@@ -56,6 +56,27 @@ pub(crate) fn is_http_loopback(base_url: &str) -> bool {
     }
 }
 
+/// Whether the request `build_request` produces uses a verb that is safe to
+/// replay after a response may already have committed server-side
+/// (GET/HEAD/PUT/DELETE/OPTIONS — the same replayable set the SDK transports
+/// use). A failed build counts as non-replayable: the attempt then surfaces
+/// the same build error and simply does not retry.
+fn replayable_verb(build_request: &impl Fn() -> RequestBuilder) -> bool {
+    build_request()
+        .build()
+        .map(|req| {
+            matches!(
+                *req.method(),
+                reqwest::Method::GET
+                    | reqwest::Method::HEAD
+                    | reqwest::Method::PUT
+                    | reqwest::Method::DELETE
+                    | reqwest::Method::OPTIONS
+            )
+        })
+        .unwrap_or(false)
+}
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default request timeout.  Raised to 300s to accommodate large archive
 /// uploads (e.g. `agent build`) which can easily exceed 60s on slow networks.
@@ -175,7 +196,8 @@ impl ApiClient {
     where
         T: DeserializeOwned,
     {
-        retry(operation, |attempt| {
+        let replayable = replayable_verb(&build_request);
+        retry(operation, replayable, |attempt| {
             let builder = self.authorize(build_request());
             async move {
                 debug!(attempt, "sending request");
@@ -193,7 +215,8 @@ impl ApiClient {
         operation: &str,
         build_request: impl Fn() -> RequestBuilder,
     ) -> Result<(), ApiError> {
-        retry(operation, |attempt| {
+        let replayable = replayable_verb(&build_request);
+        retry(operation, replayable, |attempt| {
             let builder = self.authorize(build_request());
             async move {
                 debug!(attempt, "sending request (empty response expected)");
@@ -378,5 +401,26 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.is_builder(), "expected scheme rejection, got {err}");
+    }
+
+    #[test]
+    fn replayable_verb_matches_sdk_method_set() {
+        let http = reqwest::Client::new();
+        let url = "https://api.gravixlayer.ai/v1/x";
+        for (method, build, expect) in [
+            ("GET", http.get(url), true),
+            ("HEAD", http.head(url), true),
+            ("PUT", http.put(url), true),
+            ("DELETE", http.delete(url), true),
+            ("OPTIONS", http.request(reqwest::Method::OPTIONS, url), true),
+            ("POST", http.post(url), false),
+            ("PATCH", http.patch(url), false),
+        ] {
+            assert_eq!(
+                replayable_verb(&|| build.try_clone().unwrap()),
+                expect,
+                "{method}"
+            );
+        }
     }
 }

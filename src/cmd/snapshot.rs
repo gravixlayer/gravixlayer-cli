@@ -4,7 +4,7 @@ use crate::api::error::ApiError;
 use crate::api::types::CreateSnapshotRequest;
 use crate::cli::{
     SnapshotActivateArgs, SnapshotCommand, SnapshotCreateArgs, SnapshotDeactivateArgs,
-    SnapshotDeleteArgs, SnapshotGetArgs, SnapshotListArgs,
+    SnapshotDeleteArgs, SnapshotForkArgs, SnapshotGetArgs, SnapshotListArgs,
 };
 use crate::ctx::AppContext;
 use crate::output::{self, table};
@@ -18,6 +18,7 @@ pub async fn handle(ctx: &AppContext, cmd: SnapshotCommand) -> anyhow::Result<()
         SnapshotCommand::Delete(args) => delete(ctx, args).await,
         SnapshotCommand::Activate(args) => activate(ctx, args).await,
         SnapshotCommand::Deactivate(args) => deactivate(ctx, args).await,
+        SnapshotCommand::Fork(args) => fork(ctx, args).await,
     }
 }
 
@@ -134,5 +135,54 @@ async fn delete(ctx: &AppContext, args: SnapshotDeleteArgs) -> anyhow::Result<()
     output::print_or_json(ctx.output, &resp, || {
         output::success(ctx.output, format!("Snapshot {} deleted", args.id));
     });
+    Ok(())
+}
+
+async fn fork(ctx: &AppContext, args: SnapshotForkArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.id, "snapshot")?;
+    // Snapshot fork creates children from the catalog capture — there is no
+    // live capture to persist, so `persist_snapshot`/`name` are rejected by
+    // the server and are not exposed as flags here.
+    let payload = super::runtime::fork_payload(
+        args.count,
+        args.timeout,
+        None,
+        None,
+        &args.env_vars,
+        args.metadata.as_deref(),
+    )?;
+
+    let spinner = (ctx.output == crate::cli::OutputFormat::Table).then(|| {
+        output::Spinner::new(format!(
+            "Starting {} runtime{} from snapshot {}…",
+            args.count,
+            if args.count == 1 { "" } else { "s" },
+            args.id
+        ))
+    });
+
+    let response = ctx
+        .api
+        .snapshot()
+        .fork(&args.id, &payload)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let Some(ref sp) = spinner {
+        sp.finish_ok(format!(
+            "Started {} runtime{}",
+            response.runtimes().count(),
+            if response.runtimes().count() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+
+    let started = super::runtime::print_fork_response(ctx, &response);
+    if started == 0 {
+        anyhow::bail!("fork produced no runtimes");
+    }
     Ok(())
 }

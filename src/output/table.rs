@@ -285,6 +285,99 @@ pub fn runtime_metrics_table(m: &RuntimeMetrics) -> Table {
     t
 }
 
+/// Fork result — started children as runtime rows. Per-child failures are
+/// printed separately by the caller since they are not `Runtime` records.
+pub fn fork_children_table(response: &ForkResponse) -> Table {
+    let children: Vec<&Runtime> = response.runtimes().collect();
+    let mut t = base_table(&[
+        "RUNTIME ID",
+        "STATUS",
+        "TEMPLATE",
+        "CLOUD",
+        "REGION",
+        "vCPU",
+        "MEM (MB)",
+        "DISK (MB)",
+        "STARTED",
+    ]);
+    for rt in children {
+        t.add_row(runtime_row(rt));
+    }
+    t
+}
+
+pub fn command_table(commands: &[CommandInfo]) -> Table {
+    let mut t = base_table(&[
+        "PID", "STATUS", "COMMAND", "DIR", "BG", "EXIT", "STARTED", "ENDED",
+    ]);
+    for cmd in commands {
+        t.add_row(vec![
+            Cell::new(cmd.pid),
+            status_cell(&cmd.status),
+            Cell::new(command_display(cmd)),
+            Cell::new(if cmd.working_dir.is_empty() {
+                "—".into()
+            } else {
+                cmd.working_dir.clone()
+            }),
+            Cell::new(if cmd.background { "yes" } else { "no" }),
+            Cell::new(opt_i32(cmd.exit_code)),
+            Cell::new(format_relative(cmd.started_at.as_deref())),
+            Cell::new(format_relative(cmd.ended_at.as_deref())),
+        ]);
+    }
+    t
+}
+
+pub fn command_detail_table(cmd: &CommandInfo) -> Table {
+    let mut t = detail_table(&["FIELD", "VALUE"]);
+    t.add_row(vec![Cell::new("pid"), Cell::new(cmd.pid)]);
+    t.add_row(vec![Cell::new("status"), status_cell(&cmd.status)]);
+    t.add_row(vec![Cell::new("command"), Cell::new(command_display(cmd))]);
+    t.add_row(vec![
+        Cell::new("working_dir"),
+        Cell::new(if cmd.working_dir.is_empty() {
+            "—".into()
+        } else {
+            cmd.working_dir.clone()
+        }),
+    ]);
+    t.add_row(vec![
+        Cell::new("background"),
+        Cell::new(if cmd.background { "yes" } else { "no" }),
+    ]);
+    t.add_row(vec![
+        Cell::new("exit_code"),
+        Cell::new(opt_i32(cmd.exit_code)),
+    ]);
+    t.add_row(vec![
+        Cell::new("timed_out"),
+        Cell::new(if cmd.timed_out { "yes" } else { "no" }),
+    ]);
+    t.add_row(vec![
+        Cell::new("started_at"),
+        Cell::new(format_relative(cmd.started_at.as_deref())),
+    ]);
+    t.add_row(vec![
+        Cell::new("ended_at"),
+        Cell::new(format_relative(cmd.ended_at.as_deref())),
+    ]);
+    t.add_row(vec![
+        Cell::new("duration_ms"),
+        Cell::new(opt_i64(cmd.duration_ms)),
+    ]);
+    t
+}
+
+/// `command` + `args` rendered the way it was submitted.
+fn command_display(cmd: &CommandInfo) -> String {
+    if cmd.args.is_empty() {
+        cmd.command.clone()
+    } else {
+        format!("{} {}", cmd.command, cmd.args.join(" "))
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Template
 // ---------------------------------------------------------------------------

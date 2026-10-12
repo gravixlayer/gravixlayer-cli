@@ -92,6 +92,17 @@ impl ApiError {
         }
     }
 
+    /// Retryable for a request whose verb is or is not safe to replay.
+    ///
+    /// A 429 is rejected before the handler runs, so replaying it can never
+    /// double-apply — it retries on any method. A 502/503/504 or a dropped
+    /// connection may already have committed server-side, so those retry
+    /// only when `replayable` marks the verb as safe
+    /// (GET/HEAD/PUT/DELETE/OPTIONS — the same rule the SDK transports use).
+    pub fn retryable_for_method(&self, replayable: bool) -> bool {
+        self.is_retryable() && (replayable || matches!(self, Self::RateLimit { .. }))
+    }
+
     /// Extract a retry-after hint in seconds (for rate-limit responses).
     pub fn retry_after_secs(&self) -> Option<f64> {
         match self {
@@ -147,5 +158,26 @@ mod tests {
         assert_eq!(ApiError::retry_after_from_headers(&headers), None);
         headers.insert(reqwest::header::RETRY_AFTER, "-2".parse().unwrap());
         assert_eq!(ApiError::retry_after_from_headers(&headers), None);
+    }
+
+    #[test]
+    fn retryable_for_method_gates_5xx_and_connection_on_verb() {
+        // 429 retries regardless of the verb — it never reached the handler.
+        let limited = ApiError::from_response(429, "slow".into());
+        assert!(limited.retryable_for_method(true));
+        assert!(limited.retryable_for_method(false));
+
+        // 5xx retries only when the verb is replayable.
+        for status in [502u16, 503, 504] {
+            let err = ApiError::from_response(status, String::new());
+            assert!(err.retryable_for_method(true), "{status} replayable");
+            assert!(!err.retryable_for_method(false), "{status} on POST");
+        }
+        // Other statuses never retry on either side.
+        for status in [400u16, 403, 404, 409, 500, 501] {
+            let err = ApiError::from_response(status, String::new());
+            assert!(!err.retryable_for_method(true), "{status}");
+            assert!(!err.retryable_for_method(false), "{status}");
+        }
     }
 }

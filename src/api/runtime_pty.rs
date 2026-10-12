@@ -60,6 +60,7 @@ pub struct PtyAckResponse {
 #[derive(Debug, Default)]
 pub struct PtyCreateParams {
     pub shell: Option<String>,
+    pub args: Vec<String>,
     pub working_dir: Option<String>,
     pub environment: HashMap<String, String>,
     pub cols: Option<u32>,
@@ -85,6 +86,9 @@ impl<'a> RuntimePtyApi<'a> {
         let mut body = serde_json::Map::new();
         if let Some(shell) = &params.shell {
             body.insert("shell".into(), serde_json::Value::String(shell.clone()));
+        }
+        if !params.args.is_empty() {
+            body.insert("args".into(), serde_json::json!(params.args));
         }
         if let Some(working_dir) = &params.working_dir {
             body.insert(

@@ -78,6 +78,85 @@ pub struct RuntimeTimeoutResponse {
     pub timeout_at: Option<String>,
 }
 
+/// Result of `POST /v1/agents/runtime/<id>/fork` and
+/// `POST /v1/agents/snapshots/<id>/fork`.
+///
+/// Fork is per-child: every position in `children` is a started runtime or an
+/// error, and the request itself does not fail over a single child — the same
+/// shape both SDKs expose (`children` is `Runtime | ForkError`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForkResponse {
+    #[serde(default)]
+    pub children: Vec<ForkChild>,
+    pub snapshot_id: Option<String>,
+    pub snapshot_persisted: Option<bool>,
+    /// Present on a live fork; absent on a snapshot fork.
+    pub parent_runtime_id: Option<String>,
+}
+
+impl ForkResponse {
+    /// Children that started, in request order.
+    pub fn runtimes(&self) -> impl Iterator<Item = &Runtime> {
+        self.children.iter().filter_map(ForkChild::runtime)
+    }
+
+    /// Per-child failures, in request order.
+    pub fn errors(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.children.iter().filter_map(|c| match c {
+            ForkChild::Error { error, code } => Some((error.as_str(), code.as_str())),
+            _ => None,
+        })
+    }
+}
+
+/// One child entry in a fork batch: `{ "runtime": {...} }` on success or
+/// `{ "error": ..., "code": ... }` on failure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ForkChild {
+    Runtime { runtime: Runtime },
+    Error { error: String, code: String },
+}
+
+impl ForkChild {
+    pub fn runtime(&self) -> Option<&Runtime> {
+        match self {
+            Self::Runtime { runtime } => Some(runtime),
+            _ => None,
+        }
+    }
+}
+
+/// A command tracked inside a runtime (running or retained after exit).
+///
+/// Matches the API's `commands` payload and the SDKs' `CommandInfo`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandInfo {
+    pub pid: u32,
+    #[serde(default)]
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub working_dir: String,
+    #[serde(default)]
+    pub background: bool,
+    pub status: String,
+    pub exit_code: Option<i32>,
+    pub started_at: Option<String>,
+    pub ended_at: Option<String>,
+    pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub timed_out: bool,
+}
+
+/// `GET /v1/agents/runtime/<id>/commands` response.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandList {
+    #[serde(default)]
+    pub commands: Vec<CommandInfo>,
+}
+
 /// Resource metrics snapshot.
 ///
 /// Runtime metrics returned by the API.
@@ -148,13 +227,39 @@ pub struct RuntimeConnectResponse {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Persistent code context. The API emits the id twice — `id` and
+/// `context_id`, same value — so serde's `alias` (which rejects a field
+/// seen twice) cannot express the shape. Both keys are read and
+/// `context_id` wins, matching how the SDKs normalize.
+#[derive(Debug, Clone, Serialize)]
 pub struct RuntimeCodeContext {
-    #[serde(alias = "id")]
     pub context_id: String,
     pub language: Option<String>,
     pub cwd: Option<String>,
     pub vm_id: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for RuntimeCodeContext {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct Raw {
+            context_id: Option<String>,
+            id: Option<String>,
+            language: Option<String>,
+            cwd: Option<String>,
+            vm_id: Option<String>,
+        }
+        let raw = Raw::deserialize(deserializer)?;
+        Ok(Self {
+            context_id: raw.context_id.or(raw.id).unwrap_or_default(),
+            language: raw.language,
+            cwd: raw.cwd,
+            vm_id: raw.vm_id,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -815,4 +920,102 @@ pub struct WhoAmI {
     pub email: Option<String>,
     pub plan: Option<String>,
     pub created_at: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn fork_response_parses_runtime_and_error_children() {
+        let body = serde_json::json!({
+            "children": [
+                { "runtime": { "runtime_id": "rt-1", "status": "running" } },
+                { "error": "capacity exhausted", "code": "capacity_exhausted" },
+                { "runtime": { "runtime_id": "rt-3", "status": "running" } }
+            ],
+            "snapshot_id": "snap-1",
+            "snapshot_persisted": false,
+            "parent_runtime_id": "rt-parent"
+        });
+        let resp: ForkResponse = serde_json::from_value(body).unwrap();
+        assert_eq!(resp.children.len(), 3);
+        assert_eq!(resp.snapshot_id.as_deref(), Some("snap-1"));
+        assert_eq!(resp.snapshot_persisted, Some(false));
+        assert_eq!(resp.parent_runtime_id.as_deref(), Some("rt-parent"));
+
+        let ids: Vec<&str> = resp.runtimes().map(|r| r.runtime_id.as_str()).collect();
+        assert_eq!(ids, ["rt-1", "rt-3"], "errors are skipped, order kept");
+        let errs: Vec<(&str, &str)> = resp.errors().collect();
+        assert_eq!(errs, [("capacity exhausted", "capacity_exhausted")]);
+    }
+
+    #[test]
+    fn fork_response_tolerates_missing_optional_fields() {
+        // Snapshot fork omits parent_runtime_id; a wholly-empty body must
+        // still parse rather than panic.
+        let resp: ForkResponse = serde_json::from_str("{}").unwrap();
+        assert!(resp.children.is_empty());
+        assert!(resp.snapshot_id.is_none());
+        assert_eq!(resp.runtimes().count(), 0);
+        assert_eq!(resp.errors().count(), 0);
+    }
+
+    #[test]
+    fn command_list_parses_server_envelope() {
+        let body = serde_json::json!({
+            "commands": [
+                {
+                    "pid": 12,
+                    "command": "sleep",
+                    "args": ["60"],
+                    "working_dir": "/",
+                    "background": true,
+                    "status": "running",
+                    "exit_code": null,
+                    "started_at": "2026-03-03T10:00:00Z",
+                    "ended_at": null,
+                    "duration_ms": null,
+                    "timed_out": false
+                }
+            ]
+        });
+        let list: CommandList = serde_json::from_value(body).unwrap();
+        assert_eq!(list.commands.len(), 1);
+        let cmd = &list.commands[0];
+        assert_eq!(cmd.pid, 12);
+        assert_eq!(cmd.command, "sleep");
+        assert_eq!(cmd.args, ["60"]);
+        assert!(cmd.background);
+        assert_eq!(cmd.status, "running");
+        assert!(cmd.exit_code.is_none());
+    }
+
+    #[test]
+    fn code_context_accepts_the_server_dual_id_shape() {
+        // The API emits `id` and `context_id` together (same value) — a
+        // serde alias would fail "duplicate field". Both must parse.
+        let dual: RuntimeCodeContext = serde_json::from_str(
+            r#"{"context_id":"c-1","id":"c-1","language":"python","cwd":"/workspace"}"#,
+        )
+        .unwrap();
+        assert_eq!(dual.context_id, "c-1");
+        assert_eq!(dual.language.as_deref(), Some("python"));
+
+        // Either key alone still produces the record.
+        let id_only: RuntimeCodeContext = serde_json::from_str(r#"{"id":"c-2"}"#).unwrap();
+        assert_eq!(id_only.context_id, "c-2");
+        let ctx_only: RuntimeCodeContext = serde_json::from_str(r#"{"context_id":"c-3"}"#).unwrap();
+        assert_eq!(ctx_only.context_id, "c-3");
+    }
+
+    #[test]
+    fn command_info_parses_minimal_record() {
+        let cmd: CommandInfo = serde_json::from_str(r#"{"pid": 1, "status": "exited"}"#).unwrap();
+        assert_eq!(cmd.pid, 1);
+        assert_eq!(cmd.status, "exited");
+        assert!(cmd.args.is_empty());
+        assert!(!cmd.background);
+        assert!(!cmd.timed_out);
+    }
 }

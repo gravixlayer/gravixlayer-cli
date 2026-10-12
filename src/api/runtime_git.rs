@@ -69,6 +69,7 @@ impl<'a> RuntimeGitApi<'a> {
     ///
     /// `auth_token` authenticates this clone only; it is not stored in the
     /// checkout, so `pull`, `fetch`, and `push` each take their own token.
+    #[allow(clippy::too_many_arguments)]
     pub async fn clone(
         &self,
         runtime_id: &str,
@@ -77,6 +78,7 @@ impl<'a> RuntimeGitApi<'a> {
         branch: Option<&str>,
         depth: Option<u32>,
         auth_token: Option<&str>,
+        timeout_seconds: Option<u32>,
     ) -> Result<GitOperationResult> {
         let mut body = serde_json::json!({ "url": url, "path": path });
         if let Some(b) = branch {
@@ -87,6 +89,9 @@ impl<'a> RuntimeGitApi<'a> {
         }
         if let Some(t) = auth_token {
             body["auth_token"] = t.into();
+        }
+        if let Some(s) = timeout_seconds {
+            body["timeout_seconds"] = (s as i64).into();
         }
         self.post_json(runtime_id, "clone", body).await
     }
@@ -130,6 +135,7 @@ impl<'a> RuntimeGitApi<'a> {
         remote: Option<&str>,
         branch: Option<&str>,
         auth_token: Option<&str>,
+        timeout_seconds: Option<u32>,
     ) -> Result<GitOperationResult> {
         let mut body = serde_json::json!({ "repository_path": path });
         if let Some(r) = remote {
@@ -140,6 +146,9 @@ impl<'a> RuntimeGitApi<'a> {
         }
         if let Some(t) = auth_token {
             body["auth_token"] = t.into();
+        }
+        if let Some(s) = timeout_seconds {
+            body["timeout_seconds"] = (s as i64).into();
         }
         self.post_json(runtime_id, "pull", body).await
     }
@@ -155,6 +164,7 @@ impl<'a> RuntimeGitApi<'a> {
         username: Option<&str>,
         password: Option<&str>,
         auth_token: Option<&str>,
+        timeout_seconds: Option<u32>,
     ) -> Result<GitOperationResult> {
         let mut body = serde_json::json!({ "repository_path": path });
         if let Some(r) = remote {
@@ -172,6 +182,9 @@ impl<'a> RuntimeGitApi<'a> {
         if let Some(t) = auth_token {
             body["auth_token"] = t.into();
         }
+        if let Some(s) = timeout_seconds {
+            body["timeout_seconds"] = (s as i64).into();
+        }
         self.post_json(runtime_id, "push", body).await
     }
 
@@ -182,6 +195,7 @@ impl<'a> RuntimeGitApi<'a> {
         path: &str,
         remote: Option<&str>,
         auth_token: Option<&str>,
+        timeout_seconds: Option<u32>,
     ) -> Result<GitOperationResult> {
         let mut body = serde_json::json!({ "repository_path": path });
         if let Some(r) = remote {
@@ -189,6 +203,9 @@ impl<'a> RuntimeGitApi<'a> {
         }
         if let Some(t) = auth_token {
             body["auth_token"] = t.into();
+        }
+        if let Some(s) = timeout_seconds {
+            body["timeout_seconds"] = (s as i64).into();
         }
         self.post_json(runtime_id, "fetch", body).await
     }

@@ -5,13 +5,14 @@ use std::time::{Duration, Instant};
 
 use crate::api::types::CreateRuntimeRequest;
 use crate::cli::{
-    RuntimeCodeContextCommand, RuntimeCommand, RuntimeConnectArgs, RuntimeContextCommand,
+    RuntimeCodeContextCommand, RuntimeCommand, RuntimeCommandsCommand, RuntimeCommandsIdArgs,
+    RuntimeCommandsKillArgs, RuntimeCommandsPidArgs, RuntimeConnectArgs, RuntimeContextCommand,
     RuntimeCreateArgs, RuntimeExecArgs, RuntimeFilesCatArgs, RuntimeFilesChmodArgs,
     RuntimeFilesChownArgs, RuntimeFilesCommand, RuntimeFilesCopyArgs, RuntimeFilesDeleteArgs,
     RuntimeFilesDownloadArgs, RuntimeFilesFindArgs, RuntimeFilesInfoArgs, RuntimeFilesListArgs,
     RuntimeFilesMkdirArgs, RuntimeFilesMoveArgs, RuntimeFilesReplaceArgs, RuntimeFilesUploadArgs,
-    RuntimeFilesWatchArgs, RuntimeFilesWriteArgs, RuntimeFilesWriteManyArgs, RuntimeGetArgs,
-    RuntimeGitAddArgs, RuntimeGitBranchArgs, RuntimeGitBranchCreateArgs,
+    RuntimeFilesWatchArgs, RuntimeFilesWriteArgs, RuntimeFilesWriteManyArgs, RuntimeForkArgs,
+    RuntimeGetArgs, RuntimeGitAddArgs, RuntimeGitBranchArgs, RuntimeGitBranchCreateArgs,
     RuntimeGitBranchDeleteArgs, RuntimeGitCheckoutArgs, RuntimeGitCloneArgs, RuntimeGitCommand,
     RuntimeGitCommitArgs, RuntimeGitFetchArgs, RuntimeGitPullArgs, RuntimeGitPushArgs,
     RuntimeGitStatusArgs, RuntimeKillArgs, RuntimeListArgs, RuntimeMetricsArgs, RuntimePauseArgs,
@@ -47,6 +48,8 @@ pub async fn handle(ctx: &mut AppContext, cmd: RuntimeCommand) -> anyhow::Result
         RuntimeCommand::Pty(args) => pty_command(ctx, args.command).await,
         RuntimeCommand::Git(args) => git(ctx, args.command).await,
         RuntimeCommand::Timeout(args) => set_timeout(ctx, args).await,
+        RuntimeCommand::Fork(args) => fork(ctx, args).await,
+        RuntimeCommand::Commands(args) => commands(ctx, args.command).await,
     }
 }
 
@@ -403,13 +406,19 @@ async fn exec(ctx: &AppContext, args: RuntimeExecArgs) -> anyhow::Result<()> {
     let env_vars = parse_env_vars(&args.env_vars)?;
     // Backend expects: command (executable string), args (rest), working_dir, environment, timeout (ms)
     let (cmd_bin, cmd_args) = args.command.split_first().unwrap();
-    let payload = serde_json::json!({
+    if args.background && args.stream {
+        anyhow::bail!("--background cannot be combined with --stream; attach with the command pid");
+    }
+    let mut payload = serde_json::json!({
         "command": cmd_bin,
         "args": cmd_args,
         "working_dir": args.workdir,
         "environment": env_vars,
         "timeout": args.timeout * 1000,
     });
+    if args.background {
+        payload["background"] = serde_json::json!(true);
+    }
     if args.stream {
         return exec_stream(ctx, &args.id, &payload).await;
     }
@@ -441,15 +450,23 @@ async fn exec_stream(
     runtime_id: &str,
     payload: &serde_json::Value,
 ) -> anyhow::Result<()> {
-    use futures_util::StreamExt;
-    use std::io::Write;
-
     let response = ctx
         .api
         .runtime()
         .exec_command_stream(runtime_id, payload)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    consume_command_stream(response).await
+}
+
+/// Render a live command SSE stream: stdout to stdout, stderr to stderr,
+/// `end` to the process exit code, `error` to a failure. Shared by
+/// `exec --stream` and `commands attach` — both consume the same
+/// `live_command_frames` wire format.
+async fn consume_command_stream(response: reqwest::Response) -> anyhow::Result<()> {
+    use futures_util::StreamExt;
+    use std::io::Write;
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
@@ -512,25 +529,33 @@ async fn exec_stream(
 
 async fn run(ctx: &AppContext, args: RuntimeRunArgs) -> anyhow::Result<()> {
     super::validate_resource_id(&args.id, "runtime")?;
-    if !args.script.is_file() {
-        anyhow::bail!("script not found: {}", args.script.display());
-    }
     let env_vars = parse_env_vars(&args.env_vars)?;
-    let content = std::fs::read_to_string(&args.script)?;
 
-    // Infer language from file extension so the backend can route to the
-    // right interpreter.  Matches `RunCodeRequest.Language` in types.go.
-    let language = args
-        .script
-        .extension()
-        .and_then(|e| e.to_str())
-        .and_then(|ext| match ext {
-            "py" => Some("python"),
-            "js" => Some("javascript"),
-            "ts" => Some("typescript"),
-            "sh" | "bash" => Some("bash"),
-            _ => None,
-        });
+    let (content, language) = match (&args.code, &args.script) {
+        (Some(code), None) => (code.clone(), args.language.clone()),
+        (None, Some(script)) => {
+            if !script.is_file() {
+                anyhow::bail!("script not found: {}", script.display());
+            }
+            let content = std::fs::read_to_string(script)?;
+
+            // Infer language from file extension so the backend can route to
+            // the right interpreter; --language overrides.
+            let inferred = script
+                .extension()
+                .and_then(|e| e.to_str())
+                .and_then(|ext| match ext {
+                    "py" => Some("python"),
+                    "js" => Some("javascript"),
+                    "ts" => Some("typescript"),
+                    "sh" | "bash" => Some("bash"),
+                    _ => None,
+                })
+                .map(str::to_string);
+            (content, args.language.clone().or(inferred))
+        }
+        _ => anyhow::bail!("provide a script path or --code"),
+    };
 
     // Field names match the public Runtime run-code API contract.
     let mut payload = serde_json::json!({
@@ -539,7 +564,10 @@ async fn run(ctx: &AppContext, args: RuntimeRunArgs) -> anyhow::Result<()> {
         "timeout": args.timeout,
     });
     if let Some(lang) = language {
-        payload["language"] = serde_json::Value::String(lang.to_string());
+        payload["language"] = serde_json::Value::String(lang);
+    }
+    if let Some(context_id) = &args.context_id {
+        payload["context_id"] = serde_json::Value::String(context_id.clone());
     }
 
     if args.stream {
@@ -1293,6 +1321,7 @@ async fn pty_create(ctx: &AppContext, args: RuntimePtyCreateArgs) -> anyhow::Res
     super::validate_resource_id(&args.runtime_id, "runtime")?;
     let params = PtyCreateParams {
         shell: args.shell,
+        args: args.args,
         working_dir: args.workdir,
         environment: parse_env_vars(&args.env_vars)?,
         cols: args.cols,
@@ -1622,6 +1651,7 @@ async fn git_clone(ctx: &AppContext, args: RuntimeGitCloneArgs) -> anyhow::Resul
             args.branch.as_deref(),
             args.depth,
             args.auth_token.as_deref(),
+            args.timeout_seconds,
         )
         .await?;
     drop(spinner);
@@ -1639,6 +1669,7 @@ async fn git_pull(ctx: &AppContext, args: RuntimeGitPullArgs) -> anyhow::Result<
             args.remote.as_deref(),
             args.branch.as_deref(),
             args.auth_token.as_deref(),
+            args.timeout_seconds,
         )
         .await?;
     finish_git(ctx, &result)
@@ -1693,6 +1724,7 @@ async fn git_fetch(ctx: &AppContext, args: RuntimeGitFetchArgs) -> anyhow::Resul
             &args.path,
             args.remote.as_deref(),
             args.auth_token.as_deref(),
+            args.timeout_seconds,
         )
         .await?;
     finish_git(ctx, &result)
@@ -1739,6 +1771,7 @@ async fn git_push(ctx: &AppContext, args: RuntimeGitPushArgs) -> anyhow::Result<
             args.username.as_deref(),
             args.password.as_deref(),
             args.auth_token.as_deref(),
+            args.timeout_seconds,
         )
         .await?;
     drop(spinner);
@@ -1795,6 +1828,182 @@ async fn set_timeout(ctx: &AppContext, args: RuntimeTimeoutArgs) -> anyhow::Resu
         output::success(ctx.output, msg);
     });
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Fork
+// ---------------------------------------------------------------------------
+
+/// Shared live-fork / snapshot-fork body — same wire fields the SDKs send.
+pub(super) fn fork_payload(
+    count: u32,
+    timeout_secs: Option<u64>,
+    persist_snapshot: Option<bool>,
+    name: Option<String>,
+    env_vars: &[String],
+    metadata: Option<&str>,
+) -> anyhow::Result<serde_json::Value> {
+    let env = parse_env_vars(env_vars)?;
+    let meta = parse_string_map_json(metadata, "metadata")?;
+    let mut payload = serde_json::json!({ "count": count });
+    if let Some(timeout) = timeout_secs {
+        payload["timeout_seconds"] = serde_json::json!(timeout);
+    }
+    if let Some(persist) = persist_snapshot {
+        payload["persist_snapshot"] = serde_json::json!(persist);
+    }
+    if let Some(name) = name {
+        payload["name"] = serde_json::json!(name);
+    }
+    if !env.is_empty() {
+        payload["env_vars"] = serde_json::json!(env);
+    }
+    if !meta.is_empty() {
+        payload["metadata"] = serde_json::json!(meta);
+    }
+    Ok(payload)
+}
+
+/// Render a fork result: runtime rows for started children, one stderr line
+/// per failed child. Returns the number that started.
+pub(super) fn print_fork_response(
+    ctx: &AppContext,
+    response: &crate::api::types::ForkResponse,
+) -> usize {
+    let started = response.runtimes().count();
+    output::print_or_json(ctx.output, response, || {
+        if started > 0 {
+            println!("{}", table::fork_children_table(response));
+        }
+        for (error, code) in response.errors() {
+            eprintln!("child failed ({code}): {error}");
+        }
+    });
+    started
+}
+
+async fn fork(ctx: &AppContext, args: RuntimeForkArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let payload = fork_payload(
+        args.count,
+        args.timeout,
+        if args.persist_snapshot {
+            Some(true)
+        } else {
+            None
+        },
+        args.name,
+        &args.env_vars,
+        args.metadata.as_deref(),
+    )?;
+
+    let spinner = if ctx.output == crate::cli::OutputFormat::Table {
+        Some(output::Spinner::new(format!(
+            "Forking {} runtime{}…",
+            args.count,
+            if args.count == 1 { "" } else { "s" }
+        )))
+    } else {
+        None
+    };
+
+    let response = ctx
+        .api
+        .runtime()
+        .fork(&args.runtime_id, &payload)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    if let Some(ref sp) = spinner {
+        sp.finish_ok(format!(
+            "Forked {} runtime{}",
+            response.runtimes().count(),
+            if response.runtimes().count() == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+
+    let started = print_fork_response(ctx, &response);
+    if started == 0 {
+        anyhow::bail!("fork produced no children");
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Commands (background command management)
+// ---------------------------------------------------------------------------
+
+async fn commands(ctx: &AppContext, cmd: RuntimeCommandsCommand) -> anyhow::Result<()> {
+    match cmd {
+        RuntimeCommandsCommand::List(args) => commands_list(ctx, args).await,
+        RuntimeCommandsCommand::Get(args) => commands_get(ctx, args).await,
+        RuntimeCommandsCommand::Kill(args) => commands_kill(ctx, args).await,
+        RuntimeCommandsCommand::Attach(args) => commands_attach(ctx, args).await,
+    }
+}
+
+async fn commands_list(ctx: &AppContext, args: RuntimeCommandsIdArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let list = ctx
+        .api
+        .runtime()
+        .list_commands(&args.runtime_id)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    output::print_or_json(ctx.output, &list, || {
+        println!("{}", table::command_table(&list.commands));
+    });
+    Ok(())
+}
+
+async fn commands_get(ctx: &AppContext, args: RuntimeCommandsPidArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let cmd = ctx
+        .api
+        .runtime()
+        .get_command(&args.runtime_id, args.pid)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    output::print_or_json(ctx.output, &cmd, || {
+        println!("{}", table::command_detail_table(&cmd));
+    });
+    Ok(())
+}
+
+async fn commands_kill(ctx: &AppContext, args: RuntimeCommandsKillArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let cmd = ctx
+        .api
+        .runtime()
+        .kill_command(&args.runtime_id, args.pid, args.signal.as_deref())
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    output::print_or_json(ctx.output, &cmd, || {
+        let signal = args.signal.as_deref().unwrap_or("KILL");
+        output::success(
+            ctx.output,
+            format!(
+                "Sent {signal} to command {} on runtime {}",
+                args.pid, args.runtime_id
+            ),
+        );
+    });
+    Ok(())
+}
+
+async fn commands_attach(ctx: &AppContext, args: RuntimeCommandsPidArgs) -> anyhow::Result<()> {
+    super::validate_resource_id(&args.runtime_id, "runtime")?;
+    let response = ctx
+        .api
+        .runtime()
+        .command_stream(&args.runtime_id, args.pid)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    consume_command_stream(response).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1924,5 +2133,40 @@ mod tests {
         // A signalled process reports -1, which carries no usable status.
         assert_eq!(git_exit_code(&result(Some(-1), None)), 1);
         assert_eq!(git_exit_code(&result(None, Some(false))), 1);
+    }
+
+    #[test]
+    fn fork_payload_matches_sdk_wire_fields() {
+        // Every flag combination lands on the same wire keys the SDKs send.
+        let minimal = super::fork_payload(1, None, None, None, &[], None).unwrap();
+        assert_eq!(minimal, serde_json::json!({ "count": 1 }));
+
+        let full = super::fork_payload(
+            3,
+            Some(600),
+            Some(true),
+            Some("keep".into()),
+            &["A=B".to_string(), "K=".to_string()],
+            Some(r#"{"team":"ml"}"#),
+        )
+        .unwrap();
+        assert_eq!(full["count"], 3);
+        assert_eq!(full["timeout_seconds"], 600);
+        assert_eq!(full["persist_snapshot"], true);
+        assert_eq!(full["name"], "keep");
+        assert_eq!(full["env_vars"]["A"], "B");
+        assert_eq!(full["env_vars"]["K"], "");
+        assert_eq!(full["metadata"]["team"], "ml");
+    }
+
+    #[test]
+    fn fork_payload_rejects_malformed_flags() {
+        assert!(super::fork_payload(1, None, None, None, &["NOEQ".into()], None).is_err());
+        assert!(super::fork_payload(1, None, None, None, &[], Some("not-json")).is_err());
+        assert!(super::fork_payload(1, None, None, None, &[], Some("[1]")).is_err());
+        assert!(
+            super::fork_payload(1, None, None, None, &[], Some(r#"{"k":1}"#)).is_err(),
+            "metadata values must be strings — the create convention"
+        );
     }
 }

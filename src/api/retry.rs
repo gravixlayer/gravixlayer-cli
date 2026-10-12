@@ -38,9 +38,16 @@ pub fn next_retry_delay(attempt: u32, retry_after: Option<f64>) -> Duration {
 /// `f` is called with the current attempt number (0-based).  On failure the
 /// delay is computed with `next_retry_delay`, the future is awaited with
 /// `tokio::time::sleep`, then `f` is called again up to `max_retries` times.
+///
+/// `replayable` marks whether the request's verb is safe to replay after a
+/// response may already have committed (GET/HEAD/PUT/DELETE/OPTIONS). Rate
+/// limits retry regardless — a 429 never reached the handler — while
+/// 502/503/504 and connection errors retry only on replayable methods, so a
+/// POST can never double-apply a committed mutation.
 pub async fn retry_with_backoff<F, Fut, T>(
     operation_name: &str,
     max_retries: u32,
+    replayable: bool,
     mut f: F,
 ) -> Result<T, ApiError>
 where
@@ -51,7 +58,7 @@ where
     loop {
         match f(attempt).await {
             Ok(val) => return Ok(val),
-            Err(err) if err.is_retryable() && attempt < max_retries => {
+            Err(err) if err.retryable_for_method(replayable) && attempt < max_retries => {
                 let delay = next_retry_delay(attempt, err.retry_after_secs());
                 debug!(
                     operation = operation_name,
@@ -69,12 +76,12 @@ where
 }
 
 /// Convenience wrapper using `MAX_RETRIES = 3`.
-pub async fn retry<F, Fut, T>(operation_name: &str, f: F) -> Result<T, ApiError>
+pub async fn retry<F, Fut, T>(operation_name: &str, replayable: bool, f: F) -> Result<T, ApiError>
 where
     F: FnMut(u32) -> Fut,
     Fut: Future<Output = Result<T, ApiError>>,
 {
-    retry_with_backoff(operation_name, MAX_RETRIES, f).await
+    retry_with_backoff(operation_name, MAX_RETRIES, replayable, f).await
 }
 
 // ---------------------------------------------------------------------------
@@ -119,7 +126,7 @@ mod tests {
     #[tokio::test]
     async fn retry_succeeds_on_first_attempt() {
         let mut calls = 0u32;
-        let result = retry("test", |_| {
+        let result = retry("test", true, |_| {
             calls += 1;
             async { Ok::<u32, ApiError>(42) }
         })
@@ -131,7 +138,7 @@ mod tests {
     #[tokio::test]
     async fn retry_propagates_non_retryable_error_immediately() {
         let mut calls = 0u32;
-        let result: Result<u32, ApiError> = retry("test", |_| {
+        let result: Result<u32, ApiError> = retry("test", true, |_| {
             calls += 1;
             async {
                 Err(ApiError::Auth {
@@ -147,7 +154,7 @@ mod tests {
     #[tokio::test]
     async fn retry_does_not_replay_403() {
         let mut calls = 0u32;
-        let result: Result<u32, ApiError> = retry("test", |_| {
+        let result: Result<u32, ApiError> = retry("test", true, |_| {
             calls += 1;
             async { Err(ApiError::from_response(403, "forbidden".into())) }
         })
@@ -157,5 +164,47 @@ mod tests {
             Err(ApiError::BadRequest { status: 403, .. })
         ));
         assert_eq!(calls, 1);
+    }
+
+    #[tokio::test]
+    async fn replayable_method_retries_5xx() {
+        let mut calls = 0u32;
+        let result: Result<u32, ApiError> = retry("test", true, |_| {
+            calls += 1;
+            async { Err(ApiError::from_response(503, "unavailable".into())) }
+        })
+        .await;
+        assert!(matches!(result, Err(ApiError::Server { status: 503, .. })));
+        assert_eq!(
+            calls, 4,
+            "503 on a replayable method retries all 3 attempts"
+        );
+    }
+
+    #[tokio::test]
+    async fn non_replayable_method_never_retries_5xx() {
+        let mut calls = 0u32;
+        let result: Result<u32, ApiError> = retry("test", false, |_| {
+            calls += 1;
+            async { Err(ApiError::from_response(502, "bad gateway".into())) }
+        })
+        .await;
+        assert!(matches!(result, Err(ApiError::Server { status: 502, .. })));
+        assert_eq!(
+            calls, 1,
+            "502 on a non-replayable method surfaces after one attempt"
+        );
+    }
+
+    #[tokio::test]
+    async fn rate_limit_retries_even_when_not_replayable() {
+        let mut calls = 0u32;
+        let result: Result<u32, ApiError> = retry("test", false, |_| {
+            calls += 1;
+            async { Err(ApiError::from_response(429, "slow".into())) }
+        })
+        .await;
+        assert!(matches!(result, Err(ApiError::RateLimit { .. })));
+        assert_eq!(calls, 4, "429 retries on any method — it never committed");
     }
 }

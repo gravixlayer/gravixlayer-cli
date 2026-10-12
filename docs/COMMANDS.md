@@ -37,15 +37,18 @@ grx / gravixlayer [GLOBAL FLAGS]
 │   ├── timeout <id> <seconds>
 │   ├── connect <id>
 │   ├── exec    <id> <cmd> [args...]
-│   ├── run     <id> (--code <expr> | --file <path>) [--lang] [--timeout]
+│   ├── run     <id> [script.py | --code <expr>] [--language] [--context-id] [--timeout] [--stream]
+│   ├── fork    <id> [--count N] [--persist-snapshot --name <N>] [--env K=V]...
+│   ├── commands <id> list|get|kill|attach
 │   ├── shell   <id>
 │   ├── context show|set|clear
 │   ├── code-context <id>
 │   ├── service web-url|list|revoke
 │   ├── ssh     enable|disable|status
-│   ├── files   upload|download|ls|cat|write|write-many|info|rm|mkdir|chmod
+│   ├── files   upload|download|ls|cat|write|write-many|info|rm|mkdir|chmod|mv|cp|chown|watch|find|replace
 │   └── git     clone|status|branch|checkout|pull|push|fetch|add|commit|branch-create|branch-delete
 ├── template    list|get|snapshot|build|status|delete
+├── snapshot    create|list|get|delete|activate|deactivate|fork
 ├── agent
 │   ├── init | create
 │   ├── dev     [dir]
@@ -210,21 +213,26 @@ grx runtime exec abc123 bash -c "ls -la /app"
 
 Evaluate code or a script file inside the runtime. Each `run` is one-shot:
 variables from one call are not available in the next. Create a context with
-`grx runtime context` and pass it when you need interpreter state to persist.
+`grx runtime code-context create` and pass `--context-id` when you need
+interpreter state to persist.
 
 ```
+grx runtime run <id> [SCRIPT]
 grx runtime run <id> --code <EXPR>
-grx runtime run <id> --file <PATH>
 
 Options:
-  --code <EXPR>     Inline code expression to evaluate
-  --file <PATH>     Local script file to upload and execute
-  --lang <LANG>     Language hint                    [default: python]
-  --timeout <SECS>  Execution timeout in seconds
+  --code <EXPR>        Inline code to execute (alternative to a script file)
+  --language <LANG>    python | javascript | typescript | bash
+                       (inferred from the script extension when omitted)
+  --context-id <ID>    Persistent code context to execute in
+  --timeout <SECS>     Execution timeout in seconds     [default: 300]
+  --stream             Stream stdout/stderr over SSE instead of one response
+  -e, --env K=V        Environment variables (repeatable)
 
 Examples:
-  grx runtime run abc123 --code "x = 42; print(f'x = {x}')"
-  grx runtime run abc123 --file ./analysis.py
+  grx runtime run abc123 -c "x = 42; print(f'x = {x}')"
+  grx runtime run abc123 ./analysis.py
+  grx runtime run abc123 ./app.ts --language typescript
 ```
 
 ### `grx runtime shell <id>`
@@ -315,6 +323,72 @@ stops a shell chain or a CI step the way it would running git locally:
 grx runtime git clone "$RT" "$URL" --target-dir /workspace/app \
   && grx runtime exec "$RT" -- make test
 ```
+
+### `grx runtime fork <id>`
+
+Start `count` independent children from one capture of a running runtime.
+Each child is a separate runtime that resumes from the parent's state —
+filesystem, memory, and processes are carried over.
+
+```
+grx runtime fork <id> [--count <N>] [--timeout <SECS>]
+                    [--persist-snapshot] [--name <NAME>]
+                    [-e KEY=VALUE ...] [--metadata <JSON>]
+
+Options:
+  --count <N>           Children to start (1-100)            [default: 1]
+  --timeout <SECS>      Per-child idle timeout in seconds
+  --persist-snapshot    Keep the capture as a named snapshot
+  --name <NAME>         Snapshot name (requires --persist-snapshot)
+  -e, --env K=V         Environment overrides on the children (repeatable)
+  --metadata <JSON>     Metadata object merged over the parent's
+
+Examples:
+  grx runtime fork abc123 --count 4
+  grx runtime fork abc123 --persist-snapshot --name baseline-4
+```
+
+Fork is per-child: a child that fails prints `child failed (<code>): <error>`
+to stderr while the others still start; the command fails only when no
+children start.
+
+### `grx runtime commands`
+
+Manage commands running in a runtime — the records `exec --background`
+creates plus anything else the agent tracks.
+
+```
+grx runtime commands list   <runtime-id>
+grx runtime commands get    <runtime-id> <pid>
+grx runtime commands kill   <runtime-id> <pid> [--signal KILL|TERM|INT|HUP]
+grx runtime commands attach <runtime-id> <pid>
+```
+
+`attach` replays buffered scrollback then follows the live stream; the
+process exits with the command's own exit code. `kill` defaults to KILL on
+the server; `--signal` accepts KILL, TERM, INT, or HUP.
+
+---
+
+## snapshot
+
+Named snapshots — captured runtime state that later `runtime create
+--snapshot` or `snapshot fork` can start from.
+
+```
+grx snapshot create      --name <NAME> --runtime-id <RT> [--kind cold|hot] [--description <D>]
+grx snapshot list        [--limit <N>] [--offset <N>] [--kind] [--runtime-id] [--state] [--source]
+grx snapshot get         <id-or-name>
+grx snapshot delete      <id-or-name> [--yes]
+grx snapshot activate    <id-or-name>
+grx snapshot deactivate  <id-or-name>
+grx snapshot fork        <id-or-name> [--count <N>] [--timeout <SECS>] [-e KEY=VALUE ...] [--metadata <JSON>]
+```
+
+`snapshot fork` starts runtimes straight from the stored capture — no live
+parent is needed and no new capture runs. `--kind hot` captures memory and
+running processes; `cold` is disk only (the default). `deactivate` keeps the
+snapshot but stops new creates from it.
 
 ---
 

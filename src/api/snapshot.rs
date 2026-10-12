@@ -100,4 +100,23 @@ impl<'a> SnapshotApi<'a> {
             .execute_empty("snapshot.delete", || self.client.delete(url.clone()))
             .await
     }
+
+    /// `POST /v1/agents/snapshots/<id>/fork`
+    ///
+    /// Starts `count` runtimes from the named snapshot — no capture runs and
+    /// the source runtime does not need to be alive. `payload` carries the
+    /// fork body the SDKs send: `count`, `timeout_seconds`, `env_vars`,
+    /// `metadata` (`persist_snapshot`/`name` are rejected on this path).
+    pub async fn fork(
+        &self,
+        id: &str,
+        payload: &serde_json::Value,
+    ) -> Result<ForkResponse, ApiError> {
+        let url = self.client.agents_url(&format!("snapshots/{id}/fork"));
+        self.client
+            .execute("snapshot.fork", || {
+                self.client.post(url.clone()).json(payload)
+            })
+            .await
+    }
 }
