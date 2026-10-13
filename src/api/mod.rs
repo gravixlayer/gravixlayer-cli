@@ -80,8 +80,28 @@ fn replayable_verb(build_request: &impl Fn() -> RequestBuilder) -> bool {
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// Default request timeout.  Raised to 300s to accommodate large archive
 /// uploads (e.g. `agent build`) which can easily exceed 60s on slow networks.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// Budget for coordination-plane ops that can take minutes server-side
+/// (snapshot captures, fork fan-out) — matches both SDKs' 600s.
+pub(crate) const LONG_OP_TIMEOUT: Duration = Duration::from_secs(600);
+/// Margin added to a guest-side execution deadline so the HTTP call always
+/// outlives the command it carries — matches the SDKs' +30s.
+const GUEST_DEADLINE_MARGIN_SECS: u64 = 30;
+/// Per-read deadline for SSE consumers — must outlast the server's 15 s
+/// keepalive pings (three strikes at 45 s), matching the SDK stream budget.
+pub(crate) const STREAM_READ_GRACE: Duration = Duration::from_secs(45);
 const USER_AGENT: &str = concat!("gravixlayer-cli/", env!("CARGO_PKG_VERSION"));
+
+/// HTTP budget for a call carrying a guest-side deadline. `0`/absent means
+/// the server's own default, so the call keeps the client default — same
+/// rule the SDKs apply.
+pub(crate) fn guest_deadline_budget(timeout_secs: u64) -> Duration {
+    if timeout_secs == 0 {
+        REQUEST_TIMEOUT
+    } else {
+        Duration::from_secs(timeout_secs.saturating_add(GUEST_DEADLINE_MARGIN_SECS))
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ApiClient
@@ -93,6 +113,9 @@ const USER_AGENT: &str = concat!("gravixlayer-cli/", env!("CARGO_PKG_VERSION"));
 #[derive(Clone, Debug)]
 pub struct ApiClient {
     http: Client,
+    /// Identical transport minus the total-request timeout — SSE streams
+    /// are unbounded by design; each read carries `STREAM_READ_GRACE`.
+    http_stream: Client,
     api_key: SecretString,
     base_url: String,
 }
@@ -113,22 +136,28 @@ impl ApiClient {
         );
 
         let base_url = base_url.unwrap_or_else(|| DEFAULT_BASE_URL.to_string());
+        let https_only = !is_http_loopback(&base_url);
+        let shared = move || {
+            Client::builder()
+                .use_rustls_tls()
+                .https_only(https_only)
+                .user_agent(USER_AGENT)
+                .default_headers(default_headers.clone())
+                .connect_timeout(CONNECT_TIMEOUT)
+                .pool_idle_timeout(Duration::from_secs(90))
+                .pool_max_idle_per_host(10)
+                .tcp_keepalive(Duration::from_secs(30))
+        };
 
-        let http = Client::builder()
-            .use_rustls_tls()
-            .https_only(!is_http_loopback(&base_url))
-            .user_agent(USER_AGENT)
-            .default_headers(default_headers)
-            .connect_timeout(CONNECT_TIMEOUT)
+        let http = shared()
             .timeout(REQUEST_TIMEOUT)
-            .pool_idle_timeout(Duration::from_secs(90))
-            .pool_max_idle_per_host(10)
-            .tcp_keepalive(Duration::from_secs(30))
             .build()
             .map_err(ApiError::Connection)?;
+        let http_stream = shared().build().map_err(ApiError::Connection)?;
 
         Ok(Self {
             http,
+            http_stream,
             api_key,
             base_url,
         })
@@ -183,6 +212,13 @@ impl ApiClient {
         builder.bearer_auth(self.api_key.expose_secret())
     }
 
+    /// The unbounded transport — stream calls only. Sends are bounded by the
+    /// handshake deadline the caller applies; after headers, reads are the
+    /// consumer's job (`STREAM_READ_GRACE` per read).
+    pub fn stream_client(&self) -> &Client {
+        &self.http_stream
+    }
+
     /// Execute an HTTP request with retry on transient errors.
     ///
     /// `T` is the expected response body type.  The status code is checked and
@@ -196,9 +232,25 @@ impl ApiClient {
     where
         T: DeserializeOwned,
     {
+        self.execute_with_timeout(operation, REQUEST_TIMEOUT, build_request)
+            .await
+    }
+
+    /// `execute` with an explicit per-request budget — for calls carrying a
+    /// guest-side deadline or a long server-side operation.
+    #[instrument(skip(self, build_request), fields(method, url))]
+    pub async fn execute_with_timeout<T>(
+        &self,
+        operation: &str,
+        timeout: Duration,
+        build_request: impl Fn() -> RequestBuilder,
+    ) -> Result<T, ApiError>
+    where
+        T: DeserializeOwned,
+    {
         let replayable = replayable_verb(&build_request);
         retry(operation, replayable, |attempt| {
-            let builder = self.authorize(build_request());
+            let builder = self.authorize(build_request()).timeout(timeout);
             async move {
                 debug!(attempt, "sending request");
                 let resp: Response = builder.send().await.map_err(ApiError::Connection)?;
@@ -401,6 +453,18 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.is_builder(), "expected scheme rejection, got {err}");
+    }
+
+    #[test]
+    fn guest_deadline_budget_mirrors_sdk_derivation() {
+        // 0/absent keeps the client default — the server default is in play.
+        assert_eq!(guest_deadline_budget(0), REQUEST_TIMEOUT);
+        // Positive deadlines get the +30s transport margin, saturating.
+        assert_eq!(guest_deadline_budget(300), Duration::from_secs(330));
+        assert_eq!(
+            guest_deadline_budget(u64::MAX),
+            Duration::from_secs(u64::MAX)
+        );
     }
 
     #[test]

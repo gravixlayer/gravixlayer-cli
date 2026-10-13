@@ -40,6 +40,11 @@ pub enum ApiError {
     #[error("connection error: {0}")]
     Connection(#[source] reqwest::Error),
 
+    /// The client-side deadline elapsed before the server answered —
+    /// transport timeout, not an HTTP response.
+    #[error("request timed out")]
+    Timeout,
+
     /// Received a successful HTTP status but the body could not be parsed.
     #[error("failed to deserialize API response: {0}")]
     Deserialization(#[source] reqwest::Error),
@@ -87,7 +92,7 @@ impl ApiError {
         match self {
             Self::Server { status, .. } => matches!(status, 502 | 503 | 504),
             Self::RateLimit { .. } => true,
-            Self::Connection(_) => true,
+            Self::Connection(_) | Self::Timeout => true,
             _ => false,
         }
     }

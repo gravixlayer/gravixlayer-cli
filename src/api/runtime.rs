@@ -126,7 +126,7 @@ impl<'a> RuntimeApi<'a> {
             .client
             .agents_url(&format!("runtime/{runtime_id}/fork"));
         self.client
-            .execute("runtime.fork", || {
+            .execute_with_timeout("runtime.fork", super::LONG_OP_TIMEOUT, || {
                 self.client.post(url.clone()).json(payload)
             })
             .await
@@ -192,13 +192,15 @@ impl<'a> RuntimeApi<'a> {
         let url = self
             .client
             .agents_url(&format!("runtime/{runtime_id}/commands/{pid}/stream"));
-        let resp = self
+        let request = self
             .client
+            .stream_client()
             .get(url)
             .bearer_auth(self.client.api_key().expose_secret())
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .send()
+            .header(reqwest::header::ACCEPT, "text/event-stream");
+        let resp = tokio::time::timeout(super::REQUEST_TIMEOUT, request.send())
             .await
+            .map_err(|_| ApiError::Timeout)?
             .map_err(ApiError::Connection)?;
 
         if resp.status().is_success() {
@@ -321,22 +323,30 @@ impl<'a> RuntimeApi<'a> {
     /// `POST /v1/agents/runtime/<id>/commands/run`
     ///
     /// Runs a shell command inside the runtime and returns output.
+    /// `timeout_budget` is the HTTP deadline — the caller derives it from the
+    /// guest timeout via `guest_deadline_budget` so the call always outlives
+    /// the command it carries.
     pub async fn exec_command(
         &self,
         runtime_id: &str,
         payload: &serde_json::Value,
+        timeout_budget: std::time::Duration,
     ) -> Result<serde_json::Value, ApiError> {
         let url = self
             .client
             .agents_url(&format!("runtime/{runtime_id}/commands/run"));
         self.client
-            .execute("runtime.exec_command", || {
+            .execute_with_timeout("runtime.exec_command", timeout_budget, || {
                 self.client.post(url.clone()).json(payload)
             })
             .await
     }
 
     /// `POST /v1/agents/runtime/<id>/commands/run?stream=true`
+    ///
+    /// The unbounded stream client carries the call — no total-request cap.
+    /// Connect and response headers are bounded by `REQUEST_TIMEOUT`; after
+    /// that the consumer's per-read grace owns the deadline.
     pub async fn exec_command_stream(
         &self,
         runtime_id: &str,
@@ -345,15 +355,17 @@ impl<'a> RuntimeApi<'a> {
         let url = self
             .client
             .agents_url(&format!("runtime/{runtime_id}/commands/run"));
-        let resp = self
+        let request = self
             .client
+            .stream_client()
             .post(url)
             .query(&[("stream", "true")])
             .bearer_auth(self.client.api_key().expose_secret())
             .header(reqwest::header::ACCEPT, "text/event-stream")
-            .json(payload)
-            .send()
+            .json(payload);
+        let resp = tokio::time::timeout(super::REQUEST_TIMEOUT, request.send())
             .await
+            .map_err(|_| ApiError::Timeout)?
             .map_err(ApiError::Connection)?;
 
         if resp.status().is_success() {
@@ -370,16 +382,18 @@ impl<'a> RuntimeApi<'a> {
     /// `POST /v1/agents/runtime/<id>/code/run`
     ///
     /// Executes a code snippet inside the runtime and returns output.
+    /// `timeout_budget` mirrors `exec_command` — guest deadline + margin.
     pub async fn run_code(
         &self,
         runtime_id: &str,
         payload: &serde_json::Value,
+        timeout_budget: std::time::Duration,
     ) -> Result<serde_json::Value, ApiError> {
         let url = self
             .client
             .agents_url(&format!("runtime/{runtime_id}/code/run"));
         self.client
-            .execute("runtime.run_code", || {
+            .execute_with_timeout("runtime.run_code", timeout_budget, || {
                 self.client.post(url.clone()).json(payload)
             })
             .await
@@ -387,26 +401,30 @@ impl<'a> RuntimeApi<'a> {
 
     /// `POST /v1/agents/runtime/<id>/code/run?stream=true`
     ///
-    /// Returns the raw streaming response so the caller can render stdout and
-    /// stderr as the interpreter produces them instead of waiting for the cell
-    /// to finish.
+    /// The server buffers a streamed cell and only emits frames once it
+    /// completes, so the first byte arrives after the guest deadline — the
+    /// handshake is bounded by `timeout_budget` (guest deadline + margin),
+    /// not the generic request timeout. Unbounded transport after that.
     pub async fn run_code_stream(
         &self,
         runtime_id: &str,
         payload: &serde_json::Value,
+        timeout_budget: std::time::Duration,
     ) -> Result<reqwest::Response, ApiError> {
         let url = self
             .client
             .agents_url(&format!("runtime/{runtime_id}/code/run"));
-        let resp = self
+        let request = self
             .client
+            .stream_client()
             .post(url)
             .query(&[("stream", "true")])
             .bearer_auth(self.client.api_key().expose_secret())
             .header(reqwest::header::ACCEPT, "text/event-stream")
-            .json(payload)
-            .send()
+            .json(payload);
+        let resp = tokio::time::timeout(timeout_budget, request.send())
             .await
+            .map_err(|_| ApiError::Timeout)?
             .map_err(ApiError::Connection)?;
 
         if resp.status().is_success() {

@@ -10,6 +10,22 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 ## [Unreleased]
+## [0.1.9] - 2026-10-13
+### Added
+- `runtime files rm -r`/`--recursive` deletes directories and their contents —
+  the flag the SDKs already expose on `file.delete`. Without it a non-empty
+  directory is refused, matching the server default.
+
+### Fixed
+- HTTP budgets now match the SDKs per operation: `exec`/`run` wait out the
+  guest deadline plus 30 s (previously a fixed 300 s cut calls mid-command
+  for `--timeout` over 300), `runtime fork`/`snapshot fork`/`snapshot create`
+  get the SDKs' 600 s coordination budget, and SSE streams (`exec --stream`,
+  `run --stream`, `commands attach`, `files watch`, `pty attach`) move to an
+  unbounded transport — the handshake keeps the 300 s deadline and each read
+  gets a 45 s grace that only trips on a genuinely stalled connection. A
+  stream longer than 300 s no longer dies mid-command.
+
 ## [0.1.8] - 2026-10-12
 ### Added
 - `runtime fork` starts `count` children from one capture — `--count` (1-100),

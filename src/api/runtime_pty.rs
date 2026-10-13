@@ -256,15 +256,20 @@ impl<'a> RuntimePtyApi<'a> {
         let url = self
             .client
             .agents_url(&format!("runtime/{runtime_id}/pty/{session_id}/stream"));
-        let resp = self
-            .client
-            .http_client()
-            .get(&url)
-            .bearer_auth(self.client.api_key_str())
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .send()
-            .await
-            .context("pty stream request")?;
+        // Unbounded stream transport — a session lives longer than the
+        // total-request timeout. Handshake keeps the standard deadline.
+        let resp = tokio::time::timeout(
+            super::REQUEST_TIMEOUT,
+            self.client
+                .stream_client()
+                .get(&url)
+                .bearer_auth(self.client.api_key_str())
+                .header(reqwest::header::ACCEPT, "text/event-stream")
+                .send(),
+        )
+        .await
+        .context("pty stream handshake timed out")?
+        .context("pty stream request")?;
         ApiClient::check_status(resp).await
     }
 

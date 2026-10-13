@@ -1,11 +1,6 @@
 // src/api/snapshot.rs — Named snapshot catalog API methods.
 
-use std::time::Duration;
-
 use super::{error::ApiError, types::*, ApiClient};
-
-/// Capture writes disk (and memory for hot). Matches the API's 10-minute budget.
-const SNAPSHOT_CREATE_TIMEOUT: Duration = Duration::from_secs(600);
 
 pub struct SnapshotApi<'a> {
     client: &'a ApiClient,
@@ -20,11 +15,8 @@ impl<'a> SnapshotApi<'a> {
     pub async fn create(&self, req: CreateSnapshotRequest) -> Result<Snapshot, ApiError> {
         let url = self.client.agents_url("snapshots");
         self.client
-            .execute("snapshot.create", || {
-                self.client
-                    .post(url.clone())
-                    .timeout(SNAPSHOT_CREATE_TIMEOUT)
-                    .json(&req)
+            .execute_with_timeout("snapshot.create", super::LONG_OP_TIMEOUT, || {
+                self.client.post(url.clone()).json(&req)
             })
             .await
     }
@@ -114,7 +106,7 @@ impl<'a> SnapshotApi<'a> {
     ) -> Result<ForkResponse, ApiError> {
         let url = self.client.agents_url(&format!("snapshots/{id}/fork"));
         self.client
-            .execute("snapshot.fork", || {
+            .execute_with_timeout("snapshot.fork", super::LONG_OP_TIMEOUT, || {
                 self.client.post(url.clone()).json(payload)
             })
             .await

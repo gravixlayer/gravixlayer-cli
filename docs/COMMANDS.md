@@ -281,7 +281,7 @@ grx runtime files cat      <id> <path>
 grx runtime files write    <id> <path> <content>
 grx runtime files upload   <id> <local-path> <remote-path>
 grx runtime files download <id> <remote-path> <local-path>
-grx runtime files rm       <id> <path>
+grx runtime files rm       <id> <path> [-r] [-y]
 grx runtime files mkdir    <id> <path>
 grx runtime files chmod    <id> <path> <mode>
 ```

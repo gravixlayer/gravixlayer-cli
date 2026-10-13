@@ -885,6 +885,9 @@ pub struct RuntimeFilesListArgs {
 pub struct RuntimeFilesDeleteArgs {
     pub runtime_id: String,
     pub path: String,
+    /// Delete directories and their contents (required for non-empty dirs)
+    #[arg(long, short = 'r')]
+    pub recursive: bool,
     #[arg(long, short = 'y')]
     pub yes: bool,
 }

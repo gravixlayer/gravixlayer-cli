@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use crate::api::guest_deadline_budget;
 use crate::api::types::CreateRuntimeRequest;
 use crate::cli::{
     RuntimeCodeContextCommand, RuntimeCommand, RuntimeCommandsCommand, RuntimeCommandsIdArgs,
@@ -426,7 +427,7 @@ async fn exec(ctx: &AppContext, args: RuntimeExecArgs) -> anyhow::Result<()> {
     let resp = ctx
         .api
         .runtime()
-        .exec_command(&args.id, &payload)
+        .exec_command(&args.id, &payload, guest_deadline_budget(args.timeout))
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     output::print_or_json(ctx.output, &resp, || {
@@ -464,15 +465,34 @@ async fn exec_stream(
 /// `end` to the process exit code, `error` to a failure. Shared by
 /// `exec --stream` and `commands attach` — both consume the same
 /// `live_command_frames` wire format.
-async fn consume_command_stream(response: reqwest::Response) -> anyhow::Result<()> {
+/// One chunk from an SSE byte stream under the per-read deadline.
+///
+/// Only command streams get this treatment — the server pings them every
+/// 15 s, so `STREAM_READ_GRACE` fires only on a genuinely stalled connection
+/// (the SDKs' read-grace). `files watch`/`pty attach` never ping — silence is
+/// their normal state — so those consumers read without a deadline.
+async fn next_sse_chunk(
+    stream: &mut (impl futures_util::Stream<Item = Result<bytes::Bytes, reqwest::Error>> + Unpin),
+) -> anyhow::Result<Option<Result<bytes::Bytes, reqwest::Error>>> {
     use futures_util::StreamExt;
+    tokio::time::timeout(crate::api::STREAM_READ_GRACE, stream.next())
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "stream stalled — no frames for {}s",
+                crate::api::STREAM_READ_GRACE.as_secs()
+            )
+        })
+}
+
+async fn consume_command_stream(response: reqwest::Response) -> anyhow::Result<()> {
     use std::io::Write;
 
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
     let mut exit_code = 0i32;
 
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = next_sse_chunk(&mut stream).await? {
         let chunk = chunk.map_err(|e| anyhow::anyhow!("stream command response: {e}"))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -571,13 +591,13 @@ async fn run(ctx: &AppContext, args: RuntimeRunArgs) -> anyhow::Result<()> {
     }
 
     if args.stream {
-        return run_code_stream(ctx, &args.id, &payload).await;
+        return run_code_stream(ctx, &args.id, &payload, args.timeout).await;
     }
 
     let resp = ctx
         .api
         .runtime()
-        .run_code(&args.id, &payload)
+        .run_code(&args.id, &payload, guest_deadline_budget(args.timeout))
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     output::print_or_json(ctx.output, &resp, || {
@@ -598,14 +618,14 @@ async fn run_code_stream(
     ctx: &AppContext,
     runtime_id: &str,
     payload: &serde_json::Value,
+    timeout_secs: u64,
 ) -> anyhow::Result<()> {
-    use futures_util::StreamExt;
     use std::io::Write;
 
     let response = ctx
         .api
         .runtime()
-        .run_code_stream(runtime_id, payload)
+        .run_code_stream(runtime_id, payload, guest_deadline_budget(timeout_secs))
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
 
@@ -613,7 +633,7 @@ async fn run_code_stream(
     let mut buffer = String::new();
     let mut failed = false;
 
-    while let Some(chunk) = stream.next().await {
+    while let Some(chunk) = next_sse_chunk(&mut stream).await? {
         let chunk = chunk.map_err(|e| anyhow::anyhow!("stream code response: {e}"))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
 
@@ -1014,7 +1034,7 @@ async fn files_delete(ctx: &AppContext, args: RuntimeFilesDeleteArgs) -> anyhow:
     let resp = ctx
         .api
         .runtime_files()
-        .delete(&args.runtime_id, &args.path)
+        .delete(&args.runtime_id, &args.path, args.recursive)
         .await?;
     output::print_or_json(ctx.output, &resp, || {
         output::success(ctx.output, format!("Deleted: {}", args.path));
@@ -1128,7 +1148,6 @@ async fn files_chown(ctx: &AppContext, args: RuntimeFilesChownArgs) -> anyhow::R
 async fn files_watch(ctx: &AppContext, args: RuntimeFilesWatchArgs) -> anyhow::Result<()> {
     use futures_util::StreamExt;
     use std::io::Write;
-
     super::validate_resource_id(&args.runtime_id, "runtime")?;
     let json_mode = ctx.output == crate::cli::OutputFormat::Json;
 
@@ -1141,6 +1160,8 @@ async fn files_watch(ctx: &AppContext, args: RuntimeFilesWatchArgs) -> anyhow::R
     let mut stream = response.bytes_stream();
     let mut buffer = String::new();
 
+    // No per-read deadline — the watch stream never pings; silence is its
+    // normal state. The transport is unbounded once headers arrive.
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| anyhow::anyhow!("stream watch response: {e}"))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -1430,7 +1451,6 @@ async fn pty_attach(ctx: &AppContext, args: RuntimePtyAttachArgs) -> anyhow::Res
     use futures_util::StreamExt;
     use std::io::Write;
 
-    super::validate_resource_id(&args.runtime_id, "runtime")?;
     let response = ctx
         .api
         .runtime_pty()
@@ -1441,6 +1461,8 @@ async fn pty_attach(ctx: &AppContext, args: RuntimePtyAttachArgs) -> anyhow::Res
     let mut buffer = String::new();
     let mut exit_code = 0i32;
 
+    // Same rule as `files watch` — no pings on this stream, so idle time is
+    // legitimate and reads are not deadline'd.
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| anyhow::anyhow!("stream pty output: {e}"))?;
         buffer.push_str(&String::from_utf8_lossy(&chunk));
@@ -2072,7 +2094,7 @@ fn parse_file_mappings(pairs: &[String]) -> anyhow::Result<Vec<(std::path::PathB
 
 #[cfg(test)]
 mod tests {
-    use super::{git_exit_code, git_failed, repository_directory_name};
+    use super::{git_exit_code, git_failed, next_sse_chunk, repository_directory_name};
     use crate::api::runtime_git::GitOperationResult;
 
     fn result(exit_code: Option<i32>, success: Option<bool>) -> GitOperationResult {
@@ -2157,6 +2179,25 @@ mod tests {
         assert_eq!(full["env_vars"]["A"], "B");
         assert_eq!(full["env_vars"]["K"], "");
         assert_eq!(full["metadata"]["team"], "ml");
+    }
+
+    #[tokio::test]
+    async fn next_sse_chunk_passes_chunks_through() {
+        let data = Ok::<bytes::Bytes, reqwest::Error>(bytes::Bytes::from_static(b"x"));
+        let mut stream = futures_util::stream::iter([data]);
+        let chunk = next_sse_chunk(&mut stream).await.unwrap();
+        assert_eq!(chunk.unwrap().unwrap(), bytes::Bytes::from_static(b"x"));
+        // End of stream returns None rather than erroring.
+        assert!(next_sse_chunk(&mut stream).await.unwrap().is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn next_sse_chunk_fails_on_a_stalled_stream() {
+        // A stream that never yields trips the per-read grace — with paused
+        // time the 45s elapses instantly in the test clock.
+        let mut stream = futures_util::stream::pending::<Result<bytes::Bytes, reqwest::Error>>();
+        let err = next_sse_chunk(&mut stream).await.unwrap_err();
+        assert!(err.to_string().contains("stalled"), "{err}");
     }
 
     #[test]

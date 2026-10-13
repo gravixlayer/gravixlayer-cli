@@ -210,11 +210,20 @@ impl<'a> RuntimeFilesApi<'a> {
     }
 
     /// `POST /v1/agents/runtime/{id}/files/delete`
-    pub async fn delete(&self, runtime_id: &str, path: &str) -> Result<FileDeleteResponse> {
+    ///
+    /// `recursive` is required to remove a non-empty directory — the server
+    /// treats an absent/false flag as file-or-empty-directory only, same rule
+    /// the SDKs apply.
+    pub async fn delete(
+        &self,
+        runtime_id: &str,
+        path: &str,
+        recursive: bool,
+    ) -> Result<FileDeleteResponse> {
         let url = self
             .client
             .agents_url(&format!("runtime/{runtime_id}/files/delete"));
-        let body = serde_json::json!({ "path": path });
+        let body = serde_json::json!({ "path": path, "recursive": recursive });
         let resp = self
             .client
             .http_client()
@@ -424,16 +433,22 @@ impl<'a> RuntimeFilesApi<'a> {
             .client
             .agents_url(&format!("runtime/{runtime_id}/files/watch"));
         let body = serde_json::json!({ "path": path, "recursive": recursive });
-        let resp = self
-            .client
-            .http_client()
-            .post(&url)
-            .bearer_auth(self.client.api_key_str())
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .json(&body)
-            .send()
-            .await
-            .context("runtime file watch request")?;
+        // Unbounded stream transport — the total-request timeout would cut a
+        // watch that is designed to run until interrupted. Connect + response
+        // headers keep the standard deadline; reads are the consumer's.
+        let resp = tokio::time::timeout(
+            super::REQUEST_TIMEOUT,
+            self.client
+                .stream_client()
+                .post(&url)
+                .bearer_auth(self.client.api_key_str())
+                .header(reqwest::header::ACCEPT, "text/event-stream")
+                .json(&body)
+                .send(),
+        )
+        .await
+        .context("runtime file watch handshake timed out")?
+        .context("runtime file watch request")?;
         ApiClient::check_status(resp).await
     }
 
