@@ -211,6 +211,9 @@ pub struct CreateRuntimeRequest {
     /// Named snapshot id or name. Mutually exclusive with `template`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<String>,
+    /// Storage mounts to attach at boot (≤8; paths absolute, non-nesting).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mounts: Vec<MountSpec>,
 }
 
 /// Payload for `POST /v1/agents/runtime/<id>/timeout`.
@@ -908,6 +911,274 @@ pub struct AttachNetworkPolicyRequest {
 }
 
 // ---------------------------------------------------------------------------
+// Storage mounts (/v1/agents/buckets, /v1/agents/bucket-links, runtime mounts)
+// ---------------------------------------------------------------------------
+
+/// A mount request: bucket, link, or git repository at a guest path.
+///
+/// `bucket` and `link` are mutually exclusive. Git mounts are read-only and
+/// take an https clone URL; credentials are secret-provider references.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MountSpec {
+    pub kind: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bucket: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub git_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub depth: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub refresh_seconds: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_secret: Option<String>,
+}
+
+/// Validate a mount before it leaves the process — the API validates again,
+/// but a local check turns a confusing 400 into an immediate, precise error.
+pub fn validate_mount(m: &MountSpec) -> Result<(), String> {
+    match m.kind.as_str() {
+        "bucket" | "git" => {}
+        other => {
+            return Err(format!(
+                "mount kind must be 'bucket' or 'git', got '{other}'"
+            ))
+        }
+    }
+    if !m.path.starts_with('/')
+        || m.path == "/"
+        || m.path.ends_with('/')
+        || m.path.contains("//")
+        || m.path.split('/').any(|s| s == "..")
+    {
+        return Err(format!(
+            "mount path must be a normalized absolute path below the guest root, got '{}'",
+            m.path
+        ));
+    }
+    if let Some(mode) = &m.mode {
+        if !matches!(mode.as_str(), "ro" | "rw") {
+            return Err(format!("mount mode must be 'ro' or 'rw', got '{mode}'"));
+        }
+        if m.kind == "git" && mode == "rw" {
+            return Err("git mounts are read-only".to_string());
+        }
+    }
+    if m.kind == "bucket" {
+        match (m.bucket.as_deref(), m.link.as_deref()) {
+            (Some(_), Some(_)) => {
+                return Err("a bucket mount takes bucket or link, not both".to_string())
+            }
+            (None, None) => {
+                return Err("a bucket mount needs bucket or link (id or name)".to_string())
+            }
+            _ => {}
+        }
+    } else {
+        match &m.url {
+            Some(u) if u.to_ascii_lowercase().starts_with("https://") => {}
+            _ => return Err("a git mount needs an https:// url".to_string()),
+        }
+        if m.credential_provider.is_some() != m.credential_secret.is_some() {
+            return Err(
+                "git credentials need credential_provider and credential_secret".to_string(),
+            );
+        }
+        for (name, v) in [("depth", m.depth), ("refresh_seconds", m.refresh_seconds)] {
+            if let Some(n) = v {
+                if !(0..=u32::MAX as i64).contains(&n) {
+                    return Err(format!("git {name} must be between 0 and {}", u32::MAX));
+                }
+            }
+        }
+    }
+    // Stray fields for the other kind are ambiguous input — refuse them
+    // rather than silently dropping.
+    match m.kind.as_str() {
+        "bucket" => {
+            if m.url.is_some()
+                || m.git_ref.is_some()
+                || m.depth.is_some()
+                || m.refresh_seconds.is_some()
+            {
+                return Err("url/git_ref/depth/refresh_seconds are for git mounts".into());
+            }
+        }
+        "git" if m.bucket.is_some() || m.link.is_some() => {
+            return Err("bucket/link are for bucket mounts, not git".into());
+        }
+        "git" => {}
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Payload for `POST /v1/agents/buckets`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateBucketRequest {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+}
+
+/// Payload for `POST /v1/agents/bucket-links`.
+#[derive(Debug, Clone, Serialize)]
+pub struct CreateBucketLinkRequest {
+    pub name: String,
+    pub provider: String,
+    pub bucket: String,
+    pub auth_mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path_style: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_provider_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub access_key_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secret_key_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_token_secret: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role_arn: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+}
+
+/// Response for `GET /v1/agents/buckets` and `/bucket-links`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageBucket {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketLink {
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub bucket: String,
+    #[serde(default)]
+    pub prefix: String,
+    #[serde(default)]
+    pub region: String,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub path_style: bool,
+    #[serde(default)]
+    pub auth_mode: String,
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub verify_error: String,
+    #[serde(default)]
+    pub last_verified_at: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketEnvelope {
+    pub bucket: StorageBucket,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BucketListEnvelope {
+    #[serde(default)]
+    pub buckets: Vec<StorageBucket>,
+    #[serde(default)]
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkEnvelope {
+    pub link: BucketLink,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkListEnvelope {
+    #[serde(default)]
+    pub links: Vec<BucketLink>,
+    #[serde(default)]
+    pub total: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuntimeMount {
+    pub id: String,
+    #[serde(default)]
+    pub runtime_id: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub target_id: Option<String>,
+    #[serde(default)]
+    pub mount_path: String,
+    #[serde(default)]
+    pub mode: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub error: String,
+    #[serde(default)]
+    pub provenance: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub detached_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MountEnvelope {
+    pub attachment: RuntimeMount,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MountListEnvelope {
+    #[serde(default)]
+    pub mounts: Vec<RuntimeMount>,
+}
+
+// ---------------------------------------------------------------------------
 // Auth / whoami
 // ---------------------------------------------------------------------------
 
@@ -925,6 +1196,87 @@ pub struct WhoAmI {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mount(kind: &str, path: &str) -> MountSpec {
+        MountSpec {
+            kind: kind.to_string(),
+            path: path.to_string(),
+            mode: None,
+            required: None,
+            bucket: None,
+            link: None,
+            url: None,
+            git_ref: None,
+            depth: None,
+            refresh_seconds: None,
+            credential_provider: None,
+            credential_secret: None,
+        }
+    }
+
+    #[test]
+    fn mount_bucket_by_id_validates() {
+        let m = MountSpec {
+            bucket: Some("bkt-1".into()),
+            mode: Some("rw".into()),
+            ..mount("bucket", "/mnt/data")
+        };
+        validate_mount(&m).unwrap();
+    }
+
+    #[test]
+    fn mount_git_https_validates() {
+        let m = MountSpec {
+            url: Some("https://example.com/r.git".into()),
+            git_ref: Some("main".into()),
+            depth: Some(1),
+            ..mount("git", "/mnt/repo")
+        };
+        validate_mount(&m).unwrap();
+    }
+
+    #[test]
+    fn mount_rejects_bad_combinations() {
+        let cases: Vec<MountSpec> = vec![
+            MountSpec {
+                bucket: Some("a".into()),
+                link: Some("b".into()),
+                ..mount("bucket", "/m")
+            },
+            mount("bucket", "/m"), // no target
+            MountSpec {
+                url: Some("https://x/y.git".into()),
+                mode: Some("rw".into()),
+                ..mount("git", "/m")
+            },
+            MountSpec {
+                url: Some("git@x:y".into()),
+                ..mount("git", "/m")
+            },
+            mount("git", "/m"), // no url
+            MountSpec {
+                bucket: Some("a".into()),
+                ..mount("bucket", "rel")
+            },
+            MountSpec {
+                bucket: Some("a".into()),
+                ..mount("bucket", "/")
+            },
+            MountSpec {
+                url: Some("https://x/y.git".into()),
+                credential_provider: Some("p".into()),
+                ..mount("git", "/m")
+            },
+            MountSpec {
+                bucket: Some("a".into()),
+                mode: Some("exec".into()),
+                ..mount("bucket", "/m")
+            },
+        ];
+        for (i, m) in cases.iter().enumerate() {
+            assert!(validate_mount(m).is_err(), "case {i} should fail: {m:?}");
+        }
+    }
 
     #[test]
     fn fork_response_parses_runtime_and_error_children() {

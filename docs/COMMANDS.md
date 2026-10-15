@@ -27,8 +27,9 @@ grx / gravixlayer [GLOBAL FLAGS]
 ├── auth        login | logout | status | token
 ├── config      show | set <key> <val> | unset <key> | profiles | use-profile <name>
 ├── runtime
-│   ├── create  [--template] [--cloud] [--region] [--timeout] [--env K=V]... [--wait] [--name]
+│   ├── create  [--template] [--cloud] [--region] [--timeout] [--env K=V]... [--mount JSON]... [--wait] [--name]
 │   ├── list    [--limit N]
+│   ├── mounts  attach --mount JSON | list | detach <attachment-id>
 │   ├── get     <id>
 │   ├── kill    <id>
 │   ├── pause   <id>
@@ -68,6 +69,9 @@ grx / gravixlayer [GLOBAL FLAGS]
 │                create|list|get|update|delete
 │                add-rule|list-rules|update-rule|delete-rule
 │                attach|detach|list-attached
+├── storage
+│   ├── bucket    create|list|get|delete
+│   └── link      create|list|get|verify|delete
 ├── billing     summary [--month YYYY-MM] [--project-id] | history | quotas
 ├── validate    [dir]
 ├── package     [dir] [--output <path>]

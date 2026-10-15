@@ -10,6 +10,30 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 ## [Unreleased]
+## [0.1.10] - 2026-10-15
+### Added
+- `storage` — managed buckets and bucket links: `storage bucket
+  create|list|get|delete` and `storage link create|list|get|verify|delete`.
+  Link auth is static (secret-provider key references — secret material
+  never crosses the CLI) or `oidc` (role assumption); `s3_compatible`
+  links take an `--endpoint` (https) and `--path-style`.
+- `runtime mounts` — `attach --mount '<json>'` (bucket/link/git at a guest
+  path), `list`, `detach <attachment_id>` on a running runtime.
+- `runtime create --mount '<json>'` — attach bucket, link, or git mounts
+  at boot (repeatable, ≤8). Mount specs are validated locally — bad paths,
+  mixed bucket/link targets, non-https endpoints or git URLs fail before
+  the request is sent.
+- `runtime display` — computer-use pixel plane: `enable`/`disable`/`status`,
+  `screenshot` (to file, `--wait-stable-ms`), `mouse` (click/move/scroll),
+  `keyboard` (type/press/hotkey), `wait-stable`, `view` (live-watch URL).
+- `runtime browser` — computer-use semantic plane: `open`/`close`/`list`/
+  `status`/`targets`, `navigate`, `command` (back/forward/reload),
+  `screenshot` (viewport/full-page/`--element`), `snapshot` (`--diff`),
+  `evaluate`, `action` (click/dblclick/hover/fill/type/press/hotkey/scroll —
+  `--target e3`, `css:#x`, `text:…`, `xpath:…`, `role:…`, `x,y`; `fill`
+  accepts `--secret-ref`), `dialog`, `downloads`/`download`, `pdf`, `view`.
+  All commands honor the shared `--output json` mode.
+
 ## [0.1.9] - 2026-10-13
 ### Added
 - `runtime files rm -r`/`--recursive` deletes directories and their contents —

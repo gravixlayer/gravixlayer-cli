@@ -3,20 +3,23 @@
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
+use anyhow::Context;
+
 use crate::api::guest_deadline_budget;
 use crate::api::types::CreateRuntimeRequest;
 use crate::cli::{
-    RuntimeCodeContextCommand, RuntimeCommand, RuntimeCommandsCommand, RuntimeCommandsIdArgs,
-    RuntimeCommandsKillArgs, RuntimeCommandsPidArgs, RuntimeConnectArgs, RuntimeContextCommand,
-    RuntimeCreateArgs, RuntimeExecArgs, RuntimeFilesCatArgs, RuntimeFilesChmodArgs,
-    RuntimeFilesChownArgs, RuntimeFilesCommand, RuntimeFilesCopyArgs, RuntimeFilesDeleteArgs,
-    RuntimeFilesDownloadArgs, RuntimeFilesFindArgs, RuntimeFilesInfoArgs, RuntimeFilesListArgs,
-    RuntimeFilesMkdirArgs, RuntimeFilesMoveArgs, RuntimeFilesReplaceArgs, RuntimeFilesUploadArgs,
-    RuntimeFilesWatchArgs, RuntimeFilesWriteArgs, RuntimeFilesWriteManyArgs, RuntimeForkArgs,
-    RuntimeGetArgs, RuntimeGitAddArgs, RuntimeGitBranchArgs, RuntimeGitBranchCreateArgs,
-    RuntimeGitBranchDeleteArgs, RuntimeGitCheckoutArgs, RuntimeGitCloneArgs, RuntimeGitCommand,
-    RuntimeGitCommitArgs, RuntimeGitFetchArgs, RuntimeGitPullArgs, RuntimeGitPushArgs,
-    RuntimeGitStatusArgs, RuntimeKillArgs, RuntimeListArgs, RuntimeMetricsArgs, RuntimePauseArgs,
+    RuntimeBrowserCommand, RuntimeCodeContextCommand, RuntimeCommand, RuntimeCommandsCommand,
+    RuntimeCommandsIdArgs, RuntimeCommandsKillArgs, RuntimeCommandsPidArgs, RuntimeConnectArgs,
+    RuntimeContextCommand, RuntimeCreateArgs, RuntimeDisplayCommand, RuntimeExecArgs,
+    RuntimeFilesCatArgs, RuntimeFilesChmodArgs, RuntimeFilesChownArgs, RuntimeFilesCommand,
+    RuntimeFilesCopyArgs, RuntimeFilesDeleteArgs, RuntimeFilesDownloadArgs, RuntimeFilesFindArgs,
+    RuntimeFilesInfoArgs, RuntimeFilesListArgs, RuntimeFilesMkdirArgs, RuntimeFilesMoveArgs,
+    RuntimeFilesReplaceArgs, RuntimeFilesUploadArgs, RuntimeFilesWatchArgs, RuntimeFilesWriteArgs,
+    RuntimeFilesWriteManyArgs, RuntimeForkArgs, RuntimeGetArgs, RuntimeGitAddArgs,
+    RuntimeGitBranchArgs, RuntimeGitBranchCreateArgs, RuntimeGitBranchDeleteArgs,
+    RuntimeGitCheckoutArgs, RuntimeGitCloneArgs, RuntimeGitCommand, RuntimeGitCommitArgs,
+    RuntimeGitFetchArgs, RuntimeGitPullArgs, RuntimeGitPushArgs, RuntimeGitStatusArgs,
+    RuntimeKillArgs, RuntimeListArgs, RuntimeMetricsArgs, RuntimeMountsCommand, RuntimePauseArgs,
     RuntimePtyAttachArgs, RuntimePtyCommand, RuntimePtyCreateArgs, RuntimePtyGetArgs,
     RuntimePtyKillArgs, RuntimePtyListArgs, RuntimePtyResizeArgs, RuntimePtySendArgs,
     RuntimePtySignalArgs, RuntimeResumeArgs, RuntimeRunArgs, RuntimeServiceCommand,
@@ -51,6 +54,9 @@ pub async fn handle(ctx: &mut AppContext, cmd: RuntimeCommand) -> anyhow::Result
         RuntimeCommand::Timeout(args) => set_timeout(ctx, args).await,
         RuntimeCommand::Fork(args) => fork(ctx, args).await,
         RuntimeCommand::Commands(args) => commands(ctx, args.command).await,
+        RuntimeCommand::Browser(args) => browser(ctx, args.command).await,
+        RuntimeCommand::Display(args) => display(ctx, args.command).await,
+        RuntimeCommand::Mounts(args) => mounts(ctx, args.command).await,
     }
 }
 
@@ -62,6 +68,19 @@ async fn create(ctx: &AppContext, args: RuntimeCreateArgs) -> anyhow::Result<()>
     // Parse KEY=VALUE env vars
     let env_vars = parse_env_vars(&args.env_vars)?;
     let metadata = parse_string_map_json(args.metadata.as_deref(), "metadata")?;
+
+    // Mounts arrive as JSON specs; validate each before the create leaves.
+    if args.mounts.len() > 8 {
+        anyhow::bail!("at most 8 mounts per runtime, got {}", args.mounts.len());
+    }
+    let mut mounts = Vec::with_capacity(args.mounts.len());
+    for raw in &args.mounts {
+        let spec: crate::api::types::MountSpec =
+            serde_json::from_str(raw).map_err(|e| anyhow::anyhow!("invalid --mount JSON: {e}"))?;
+        crate::api::types::validate_mount(&spec)
+            .map_err(|e| anyhow::anyhow!("invalid --mount: {e}"))?;
+        mounts.push(spec);
+    }
 
     let template = if args.snapshot.is_some() {
         String::new()
@@ -81,6 +100,7 @@ async fn create(ctx: &AppContext, args: RuntimeCreateArgs) -> anyhow::Result<()>
         providers: args.providers,
         network_policy_ids: args.network_policies,
         snapshot: args.snapshot,
+        mounts,
     };
 
     let spinner = if ctx.output == crate::cli::OutputFormat::Table {
@@ -2090,6 +2110,525 @@ fn parse_file_mappings(pairs: &[String]) -> anyhow::Result<Vec<(std::path::PathB
             Ok((std::path::PathBuf::from(local), remote.to_string()))
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Browser
+// ---------------------------------------------------------------------------
+
+fn browser_target(spec: &str) -> serde_json::Value {
+    // e3 → ref; "css:x" / "text:x" / "xpath:x" / "role:x" → selector; "x,y" → coords.
+    if let Some(v) = spec.strip_prefix("css:") {
+        serde_json::json!({"by": "css", "value": v})
+    } else if let Some(v) = spec.strip_prefix("text:") {
+        serde_json::json!({"by": "text", "value": v})
+    } else if let Some(v) = spec.strip_prefix("xpath:") {
+        serde_json::json!({"by": "xpath", "value": v})
+    } else if let Some(v) = spec.strip_prefix("role:") {
+        serde_json::json!({"by": "role", "value": v})
+    } else if spec.contains(',') {
+        let (x, y) = spec.split_once(',').unwrap();
+        serde_json::json!({"by": "coords", "attrs": {"x": x.trim(), "y": y.trim()}})
+    } else {
+        serde_json::json!({"by": "ref", "value": spec})
+    }
+}
+
+async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result<()> {
+    match cmd {
+        RuntimeBrowserCommand::Open(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let b = ctx
+                .api
+                .runtime_browser()
+                .open(&a.id, a.headless, a.url.as_deref().unwrap_or(""))
+                .await?;
+            output::print_or_json(ctx.output, &b, || {
+                println!("browser_id: {}", b.browser_id);
+                println!("engine: {}", b.engine);
+                println!("headless: {}", b.headless);
+            });
+        }
+        RuntimeBrowserCommand::Close(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            ctx.api.runtime_browser().close(&a.id, &a.browser).await?;
+            println!("closed {}", a.browser);
+        }
+        RuntimeBrowserCommand::List(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx.api.runtime_browser().list(&a.id).await?;
+            output::print_or_json(ctx.output, &r, || {
+                for b in &r.browsers {
+                    println!("{}\t{}\t{}", b.browser_id, b.engine, b.state);
+                }
+            });
+        }
+        RuntimeBrowserCommand::Status(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let s = ctx.api.runtime_browser().status(&a.id, &a.browser).await?;
+            output::print_or_json(ctx.output, &s, || {
+                println!("state: {}", s.state);
+                for t in &s.targets {
+                    println!(
+                        "{}	{}	{}",
+                        t["target_id"].as_str().unwrap_or(""),
+                        t["title"].as_str().unwrap_or(""),
+                        t["url"].as_str().unwrap_or(""),
+                    );
+                }
+            });
+        }
+        RuntimeBrowserCommand::Navigate(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .navigate(&a.id, &a.browser, &a.url, &a.wait_until, a.timeout_ms)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{} {}", r.status, r.url);
+                println!("title: {}", r.title);
+            });
+        }
+        RuntimeBrowserCommand::Command(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            match a.verb.as_str() {
+                "back" | "forward" | "reload" | "activate" => {}
+                _ => anyhow::bail!("verb must be back|forward|reload|activate"),
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .command(
+                    &a.id,
+                    &a.browser,
+                    &a.verb,
+                    a.target.as_deref().unwrap_or(""),
+                )
+                .await?;
+            output::print_or_json(ctx.output, &r, || println!("{}", r.url));
+        }
+        RuntimeBrowserCommand::Screenshot(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({
+                "format": a.format,
+                "full_page": a.full_page,
+            });
+            if let Some(t) = a.target.as_deref() {
+                body["target_id"] = serde_json::json!(t);
+            }
+            if let Some(e) = a.element.as_deref() {
+                body["element"] = browser_target(e);
+            }
+            if let Some(w) = a.wait_stable_ms {
+                body["wait_stable_ms"] = serde_json::json!(w);
+            }
+            if let Some(t) = a.timeout_ms {
+                body["timeout_ms"] = serde_json::json!(t);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .screenshot(&a.id, &a.browser, body)
+                .await?;
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&r.data)
+                .context("decode screenshot")?;
+            tokio::fs::write(&a.out, &bytes).await?;
+            println!("wrote {} ({}x{})", a.out, r.width, r.height);
+        }
+        RuntimeBrowserCommand::Snapshot(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .snapshot(
+                    &a.id,
+                    &a.browser,
+                    a.target.as_deref().unwrap_or(""),
+                    a.rev.as_deref().unwrap_or(""),
+                )
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                for el in &r.elements {
+                    println!(
+                        "{}\t{}\t{}",
+                        el["ref"].as_str().unwrap_or(""),
+                        el["tag"].as_str().unwrap_or(""),
+                        el["name"]
+                            .as_str()
+                            .or_else(|| el["text"].as_str())
+                            .unwrap_or("")
+                    );
+                }
+            });
+        }
+        RuntimeBrowserCommand::Evaluate(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .evaluate(&a.id, &a.browser, &a.expression, a.await_promise)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&r.result).unwrap_or_default()
+                );
+            });
+        }
+        RuntimeBrowserCommand::Action(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({
+                "settle": !a.no_settle,
+                "force": a.force,
+                "target_id": a.tab.as_deref().unwrap_or(""),
+            });
+            if let Some(t) = a.target.as_deref() {
+                body["target"] = browser_target(t);
+            }
+            match a.verb.as_str() {
+                "click" | "dblclick" | "hover" | "scroll" => {}
+                "fill" => {
+                    if let Some(sr) = a.secret_ref.as_deref() {
+                        body["secret_ref"] = serde_json::json!(sr);
+                    } else {
+                        body["text"] = serde_json::json!(a.value.as_deref().unwrap_or(""));
+                    }
+                }
+                "type" => {
+                    body["text"] = serde_json::json!(a.value.as_deref().unwrap_or(""));
+                    if let Some(d) = a.delay_ms {
+                        body["delay_ms"] = serde_json::json!(d);
+                    }
+                }
+                "press" => body["key"] = serde_json::json!(a.value.as_deref().unwrap_or("")),
+                "hotkey" => {
+                    let keys: Vec<String> = a
+                        .value
+                        .as_deref()
+                        .unwrap_or("")
+                        .split(',')
+                        .map(|k| k.trim().to_string())
+                        .filter(|k| !k.is_empty())
+                        .collect();
+                    body["keys"] = serde_json::json!(keys);
+                }
+                _ => {
+                    anyhow::bail!("verb must be click|dblclick|hover|fill|type|press|hotkey|scroll")
+                }
+            }
+            if a.verb == "scroll" {
+                if let Some(v) = a.value.as_deref().and_then(|v| v.split_once(',')) {
+                    body["dx"] = serde_json::json!(v.0.trim().parse::<f64>().unwrap_or(0.0));
+                    body["dy"] = serde_json::json!(v.1.trim().parse::<f64>().unwrap_or(0.0));
+                }
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .action(&a.id, &a.browser, &a.verb, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!(
+                    "ok={} navigated={} settled={}",
+                    r.ok, r.navigated, r.settled
+                );
+            });
+        }
+        RuntimeBrowserCommand::Downloads(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .downloads(&a.id, &a.browser)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                for d in &r.downloads {
+                    println!(
+                        "{}\t{}\t{}\t{}B",
+                        d["id"].as_str().unwrap_or(""),
+                        d["state"].as_str().unwrap_or(""),
+                        d["filename"].as_str().unwrap_or(""),
+                        d["bytes"].as_u64().unwrap_or(0),
+                    );
+                }
+            });
+        }
+        RuntimeBrowserCommand::Download(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .download_get(&a.id, &a.browser, &a.download_id)
+                .await?;
+            let out = a
+                .out
+                .clone()
+                .or_else(|| {
+                    a.out.clone().or_else(|| {
+                        r.entry
+                            .get("filename")
+                            .and_then(|f| f.as_str().map(str::to_string))
+                    })
+                })
+                .unwrap_or_else(|| a.download_id.clone());
+            let b64 = r
+                .data
+                .as_deref()
+                .ok_or_else(|| anyhow::anyhow!("download {} has no payload yet", a.download_id))?;
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(b64)
+                .context("decode download")?;
+            tokio::fs::write(&out, &bytes).await?;
+            println!("wrote {} ({}B)", out, bytes.len());
+        }
+        RuntimeBrowserCommand::Pdf(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .pdf(
+                    &a.id,
+                    &a.browser,
+                    &a.target,
+                    a.landscape,
+                    a.print_background,
+                )
+                .await?;
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&r.data)
+                .context("decode pdf")?;
+            tokio::fs::write(&a.out, &bytes).await?;
+            println!("wrote {} ({}B)", a.out, bytes.len());
+        }
+        RuntimeBrowserCommand::View(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .view(
+                    &a.id,
+                    &a.browser,
+                    a.fps.unwrap_or(0),
+                    a.quality.unwrap_or(0),
+                )
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                let url = r.browser_url.as_deref().unwrap_or(&r.url);
+                println!("{url}");
+            });
+        }
+        RuntimeBrowserCommand::Dialog(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            ctx.api
+                .runtime_browser()
+                .dialog(
+                    &a.id,
+                    &a.browser,
+                    a.target.as_deref().unwrap_or(""),
+                    a.accept,
+                    a.prompt_text.as_deref().unwrap_or(""),
+                    a.auto_dismiss,
+                )
+                .await?;
+            println!("ok");
+        }
+        RuntimeBrowserCommand::Targets(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx.api.runtime_browser().targets(&a.id, &a.browser).await?;
+            output::print_or_json(ctx.output, &r, || {
+                for t in r["targets"].as_array().cloned().unwrap_or_default() {
+                    println!(
+                        "{}\t{}\t{}",
+                        t["target_id"].as_str().unwrap_or(""),
+                        t["type"].as_str().unwrap_or(""),
+                        t["title"].as_str().unwrap_or(""),
+                    );
+                }
+            });
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Display
+// ---------------------------------------------------------------------------
+
+async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result<()> {
+    match cmd {
+        RuntimeDisplayCommand::Enable(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let s = ctx
+                .api
+                .runtime_display()
+                .enable(
+                    &a.id,
+                    a.width,
+                    a.height,
+                    &a.display,
+                    a.wm.as_deref().unwrap_or(""),
+                )
+                .await?;
+            output::print_or_json(ctx.output, &s, || {
+                println!("enabled: {}", s.enabled);
+                println!("{}x{} on {}", s.width, s.height, s.display);
+            });
+        }
+        RuntimeDisplayCommand::Disable(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            ctx.api.runtime_display().disable(&a.id).await?;
+            println!("display disabled");
+        }
+        RuntimeDisplayCommand::Status(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let s = ctx.api.runtime_display().status(&a.id).await?;
+            output::print_or_json(ctx.output, &s, || {
+                println!("enabled: {}", s.enabled);
+                if s.enabled {
+                    println!("{}x{} on {}", s.width, s.height, s.display);
+                }
+            });
+        }
+        RuntimeDisplayCommand::Screenshot(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_display()
+                .screenshot(
+                    &a.id,
+                    a.wait_stable_ms.unwrap_or(0),
+                    a.timeout_ms.unwrap_or(0),
+                    &a.format,
+                )
+                .await?;
+            use base64::Engine;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(&r.data)
+                .context("decode screenshot")?;
+            tokio::fs::write(&a.out, &bytes).await?;
+            println!("wrote {} ({}x{})", a.out, r.width, r.height);
+        }
+        RuntimeDisplayCommand::View(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_display()
+                .view(&a.id, a.fps.unwrap_or(0), a.quality.unwrap_or(0))
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                let url = r.browser_url.as_deref().unwrap_or(&r.url);
+                println!("{url}");
+            });
+        }
+        RuntimeDisplayCommand::WaitStable(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_display()
+                .wait_stable(&a.id, a.stable_ms, a.timeout_ms)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("settled: {} in {}ms", r.settled, r.waited_ms);
+            });
+        }
+        RuntimeDisplayCommand::Mouse(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let (path, body) = match a.verb.as_str() {
+                "click" => (
+                    "/mouse/click",
+                    serde_json::json!({"x": a.x.unwrap_or(0), "y": a.y.unwrap_or(0), "button": a.button}),
+                ),
+                "move" => (
+                    "/mouse/move",
+                    serde_json::json!({"x": a.x.unwrap_or(0), "y": a.y.unwrap_or(0)}),
+                ),
+                "scroll" => (
+                    "/mouse/scroll",
+                    serde_json::json!({"dx": a.dx.unwrap_or(0), "dy": a.dy.unwrap_or(0)}),
+                ),
+                _ => anyhow::bail!("verb must be click|move|scroll"),
+            };
+            ctx.api.runtime_display().input(&a.id, path, body).await?;
+            println!("ok");
+        }
+        RuntimeDisplayCommand::Keyboard(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let (path, body) = match a.verb.as_str() {
+                "type" => (
+                    "/keyboard/type",
+                    serde_json::json!({"text": a.value.as_deref().unwrap_or(""), "delay_ms": a.delay_ms.unwrap_or(0)}),
+                ),
+                "press" => (
+                    "/keyboard/press",
+                    serde_json::json!({"key": a.value.as_deref().unwrap_or("")}),
+                ),
+                "hotkey" => {
+                    let keys: Vec<String> = a
+                        .keys
+                        .as_deref()
+                        .or(a.value.as_deref())
+                        .unwrap_or("")
+                        .split(',')
+                        .map(|k| k.trim().to_string())
+                        .filter(|k| !k.is_empty())
+                        .collect();
+                    ("/keyboard/hotkey", serde_json::json!({"keys": keys}))
+                }
+                _ => anyhow::bail!("verb must be type|press|hotkey"),
+            };
+            ctx.api.runtime_display().input(&a.id, path, body).await?;
+            println!("ok");
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Storage mounts
+// ---------------------------------------------------------------------------
+
+async fn mounts(ctx: &AppContext, cmd: RuntimeMountsCommand) -> anyhow::Result<()> {
+    match cmd {
+        RuntimeMountsCommand::Attach(args) => {
+            super::validate_resource_id(&args.runtime_id, "runtime")?;
+            let spec: crate::api::types::MountSpec = serde_json::from_str(&args.mount)
+                .map_err(|e| anyhow::anyhow!("invalid --mount JSON: {e}"))?;
+            crate::api::types::validate_mount(&spec)
+                .map_err(|e| anyhow::anyhow!("invalid --mount: {e}"))?;
+            let mount = ctx
+                .api
+                .storage()
+                .attach_mount(&args.runtime_id, &spec)
+                .await?;
+            output::print_or_json(ctx.output, &mount, || {
+                println!("{}", table::mount_detail_table(&mount));
+            });
+        }
+        RuntimeMountsCommand::List(args) => {
+            super::validate_resource_id(&args.runtime_id, "runtime")?;
+            let result = ctx.api.storage().list_mounts(&args.runtime_id).await?;
+            output::print_or_json(ctx.output, &result, || {
+                println!("{}", table::mount_table(&result.mounts));
+            });
+        }
+        RuntimeMountsCommand::Detach(args) => {
+            super::validate_resource_id(&args.runtime_id, "runtime")?;
+            super::validate_resource_id(&args.attachment_id, "mount")?;
+            ctx.api
+                .storage()
+                .detach_mount(&args.runtime_id, &args.attachment_id)
+                .await?;
+            output::print_or_json(ctx.output, &true, || {
+                println!("Detached {}", args.attachment_id);
+            });
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

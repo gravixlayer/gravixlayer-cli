@@ -11,6 +11,7 @@ pub mod package;
 pub mod provider;
 pub mod runtime;
 pub mod snapshot;
+pub mod storage;
 pub mod template;
 pub mod update;
 pub mod validate;

@@ -992,3 +992,113 @@ pub fn pty_session_table(sessions: &[PtySession]) -> Table {
     }
     t
 }
+
+// ---------------------------------------------------------------------------
+// Storage mounts
+// ---------------------------------------------------------------------------
+
+pub fn bucket_table(buckets: &[StorageBucket]) -> Table {
+    let mut t = base_table(&["ID", "NAME", "BUCKET", "REGION", "STATUS", "CREATED"]);
+    for b in buckets {
+        t.add_row(vec![
+            Cell::new(&b.id),
+            Cell::new(&b.name),
+            Cell::new(&b.bucket),
+            Cell::new(&b.region),
+            status_cell(&b.status),
+            Cell::new(format_relative(b.created_at.as_deref())),
+        ]);
+    }
+    t
+}
+
+pub fn bucket_detail_table(b: &StorageBucket) -> Table {
+    let mut t = detail_table(&["FIELD", "VALUE"]);
+    t.add_row(vec![Cell::new("id"), Cell::new(&b.id)]);
+    t.add_row(vec![Cell::new("name"), Cell::new(&b.name)]);
+    t.add_row(vec![Cell::new("provider"), Cell::new(&b.provider)]);
+    t.add_row(vec![Cell::new("bucket"), Cell::new(&b.bucket)]);
+    t.add_row(vec![Cell::new("region"), Cell::new(&b.region)]);
+    t.add_row(vec![Cell::new("status"), status_cell(&b.status)]);
+    if !b.error.is_empty() {
+        t.add_row(vec![Cell::new("error"), Cell::new(&b.error)]);
+    }
+    t.add_row(vec![
+        Cell::new("created"),
+        Cell::new(format_relative(b.created_at.as_deref())),
+    ]);
+    t
+}
+
+pub fn link_table(links: &[BucketLink]) -> Table {
+    let mut t = base_table(&["ID", "NAME", "PROVIDER", "BUCKET", "PREFIX", "STATUS"]);
+    for l in links {
+        t.add_row(vec![
+            Cell::new(&l.id),
+            Cell::new(&l.name),
+            Cell::new(&l.provider),
+            Cell::new(&l.bucket),
+            Cell::new(&l.prefix),
+            status_cell(&l.status),
+        ]);
+    }
+    t
+}
+
+pub fn link_detail_table(l: &BucketLink) -> Table {
+    let mut t = detail_table(&["FIELD", "VALUE"]);
+    t.add_row(vec![Cell::new("id"), Cell::new(&l.id)]);
+    t.add_row(vec![Cell::new("name"), Cell::new(&l.name)]);
+    t.add_row(vec![Cell::new("provider"), Cell::new(&l.provider)]);
+    t.add_row(vec![Cell::new("bucket"), Cell::new(&l.bucket)]);
+    if !l.prefix.is_empty() {
+        t.add_row(vec![Cell::new("prefix"), Cell::new(&l.prefix)]);
+    }
+    t.add_row(vec![Cell::new("region"), Cell::new(&l.region)]);
+    if let Some(ref ep) = l.endpoint {
+        t.add_row(vec![Cell::new("endpoint"), Cell::new(ep)]);
+    }
+    t.add_row(vec![
+        Cell::new("path_style"),
+        Cell::new(if l.path_style { "true" } else { "false" }),
+    ]);
+    t.add_row(vec![Cell::new("auth_mode"), Cell::new(&l.auth_mode)]);
+    t.add_row(vec![Cell::new("status"), status_cell(&l.status)]);
+    if !l.verify_error.is_empty() {
+        t.add_row(vec![Cell::new("verify_error"), Cell::new(&l.verify_error)]);
+    }
+    t
+}
+
+pub fn mount_table(mounts: &[RuntimeMount]) -> Table {
+    let mut t = base_table(&["ID", "KIND", "PATH", "MODE", "STATE"]);
+    for m in mounts {
+        t.add_row(vec![
+            Cell::new(&m.id),
+            Cell::new(&m.kind),
+            Cell::new(&m.mount_path),
+            Cell::new(&m.mode),
+            status_cell(&m.state),
+        ]);
+    }
+    t
+}
+
+pub fn mount_detail_table(m: &RuntimeMount) -> Table {
+    let mut t = detail_table(&["FIELD", "VALUE"]);
+    t.add_row(vec![Cell::new("id"), Cell::new(&m.id)]);
+    t.add_row(vec![Cell::new("kind"), Cell::new(&m.kind)]);
+    t.add_row(vec![Cell::new("path"), Cell::new(&m.mount_path)]);
+    t.add_row(vec![Cell::new("mode"), Cell::new(&m.mode)]);
+    t.add_row(vec![Cell::new("state"), status_cell(&m.state)]);
+    if let Some(ref tid) = m.target_id {
+        t.add_row(vec![Cell::new("target"), Cell::new(tid)]);
+    }
+    if let Some(ref p) = m.provenance {
+        t.add_row(vec![Cell::new("provenance"), Cell::new(p)]);
+    }
+    if !m.error.is_empty() {
+        t.add_row(vec![Cell::new("error"), Cell::new(&m.error)]);
+    }
+    t
+}

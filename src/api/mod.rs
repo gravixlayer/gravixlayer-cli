@@ -18,11 +18,13 @@ pub mod network_policy;
 pub mod provider;
 pub mod retry;
 pub mod runtime;
+pub mod runtime_browser;
 pub mod runtime_files;
 pub mod runtime_git;
 pub mod runtime_pty;
 pub mod runtime_service;
 pub mod snapshot;
+pub mod storage;
 pub mod template;
 pub mod types;
 
@@ -348,6 +350,11 @@ impl ApiClient {
         network_policy::NetworkPolicyApi::new(self)
     }
 
+    /// Storage mounts: buckets, bucket links, runtime mounts.
+    pub fn storage(&self) -> storage::StorageApi<'_> {
+        storage::StorageApi::new(self)
+    }
+
     pub fn runtime_files(&self) -> runtime_files::RuntimeFilesApi<'_> {
         runtime_files::RuntimeFilesApi::new(self)
     }
@@ -362,6 +369,14 @@ impl ApiClient {
 
     pub fn runtime_service(&self) -> runtime_service::RuntimeServiceApi<'_> {
         runtime_service::RuntimeServiceApi::new(self)
+    }
+
+    pub fn runtime_browser(&self) -> runtime_browser::RuntimeBrowserApi<'_> {
+        runtime_browser::RuntimeBrowserApi::new(self)
+    }
+
+    pub fn runtime_display(&self) -> runtime_browser::RuntimeDisplayApi<'_> {
+        runtime_browser::RuntimeDisplayApi::new(self)
     }
 
     /// Expose the underlying reqwest `Client` for WebSocket upgrades.

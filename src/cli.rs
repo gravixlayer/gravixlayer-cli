@@ -97,6 +97,8 @@ pub enum Commands {
     Validate(ValidateArgs),
     /// Package an agent project into a deployable archive
     Package(PackageArgs),
+    /// Manage buckets, bucket links, and mounts
+    Storage(StorageArgs),
     /// Generate shell completions
     Completions(CompletionsArgs),
     /// Diagnose local CLI install / auth / config
@@ -239,6 +241,466 @@ pub enum RuntimeCommand {
     Fork(RuntimeForkArgs),
     /// Inspect and signal background commands inside a runtime
     Commands(RuntimeCommandsArgs),
+    /// Control the runtime's browser (open, navigate, act, snapshot, view)
+    Browser(RuntimeBrowserArgs),
+    /// Control the runtime's display (pixels, input, live view)
+    Display(RuntimeDisplayArgs),
+    /// Storage mounts on this runtime (bucket, link, or git)
+    Mounts(RuntimeMountsArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeMountsArgs {
+    #[command(subcommand)]
+    pub command: RuntimeMountsCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimeMountsCommand {
+    /// Attach a bucket, link, or git repository at a guest path
+    Attach(RuntimeMountAttachArgs),
+    /// List mounts attached to the runtime
+    List(RuntimeMountsListArgs),
+    /// Detach a mount by attachment id
+    Detach(RuntimeMountDetachArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeMountAttachArgs {
+    /// Runtime ID (UUID)
+    pub runtime_id: String,
+    /// Mount as JSON — same shape as `runtime create --mount`
+    #[arg(long, value_name = "JSON")]
+    pub mount: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeMountsListArgs {
+    /// Runtime ID (UUID)
+    pub runtime_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeMountDetachArgs {
+    /// Runtime ID (UUID)
+    pub runtime_id: String,
+    /// Attachment ID returned by `attach` or `list`
+    pub attachment_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserArgs {
+    #[command(subcommand)]
+    pub command: RuntimeBrowserCommand,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayArgs {
+    #[command(subcommand)]
+    pub command: RuntimeDisplayCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimeBrowserCommand {
+    /// Open a browser (headed on the display by default)
+    Open(RuntimeBrowserOpenArgs),
+    /// Close a browser
+    Close(RuntimeBrowserIdArgs),
+    /// List the runtime's browsers
+    List(RuntimeBrowserListArgs),
+    /// Show a browser's status (url/title/targets)
+    Status(RuntimeBrowserIdArgs),
+    /// Navigate the browser to a URL
+    Navigate(RuntimeBrowserNavigateArgs),
+    /// History back / forward / reload
+    Command(RuntimeBrowserCommandArgs),
+    /// Screenshot the page (viewport, full-page, or an element)
+    Screenshot(RuntimeBrowserShotArgs),
+    /// Element digest — ref-addressed interactables for agents
+    Snapshot(RuntimeBrowserSnapshotArgs),
+    /// Evaluate JavaScript in the page
+    Evaluate(RuntimeBrowserEvalArgs),
+    /// Click/dblclick/hover/fill/type/press/hotkey/scroll an element
+    Action(RuntimeBrowserActionArgs),
+    /// List downloads
+    Downloads(RuntimeBrowserIdArgs),
+    /// Fetch a download's bytes to a local file
+    Download(RuntimeBrowserDownloadArgs),
+    /// Render a target to PDF
+    Pdf(RuntimeBrowserPdfArgs),
+    /// Mint a live-watch URL a human can open
+    View(RuntimeBrowserViewArgs),
+    /// Answer or dismiss a pending JavaScript dialog
+    Dialog(RuntimeBrowserDialogArgs),
+    /// List a browser's targets (tabs)
+    Targets(RuntimeBrowserTargetsArgs),
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimeDisplayCommand {
+    /// Start the display server (Xvfb + window manager)
+    Enable(RuntimeDisplayEnableArgs),
+    /// Stop the display server
+    Disable(RuntimeDisplayIdArgs),
+    /// Display status
+    Status(RuntimeDisplayIdArgs),
+    /// Screenshot the screen to a local file
+    Screenshot(RuntimeDisplayShotArgs),
+    /// Live-watch URL a human can open
+    View(RuntimeDisplayViewArgs),
+    /// Wait until the screen stops changing
+    WaitStable(RuntimeDisplayWaitArgs),
+    /// Mouse input (click/move/scroll)
+    Mouse(RuntimeDisplayMouseArgs),
+    /// Keyboard input (type/press/hotkey)
+    Keyboard(RuntimeDisplayKeyboardArgs),
+}
+
+// ── browser arg structs ─────────────────────────────────────────────────────
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserListArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserIdArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserOpenArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Run headless (no window on the display)
+    #[arg(long)]
+    pub headless: bool,
+    /// Initial URL
+    #[arg(long)]
+    pub url: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserNavigateArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// URL to navigate to
+    pub url: String,
+    /// Target (tab) ID — empty uses the active target
+    #[arg(long)]
+    pub target: Option<String>,
+    /// load | domcontentloaded | networkidle | none
+    #[arg(long, default_value = "load")]
+    pub wait_until: String,
+    /// Navigation timeout (ms)
+    #[arg(long, default_value_t = 30_000)]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserCommandArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// back | forward | reload | activate
+    pub verb: String,
+    /// Target (tab) ID — empty uses the active target
+    #[arg(long)]
+    pub target: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserShotArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Output file (png/jpeg)
+    #[arg(long, default_value = "screenshot.png")]
+    pub out: String,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub target: Option<String>,
+    /// png | jpeg
+    #[arg(long, default_value = "png")]
+    pub format: String,
+    /// Capture the full scrollable page
+    #[arg(long)]
+    pub full_page: bool,
+    /// Element ref/selector to clip to (e.g. e3, css:#el)
+    #[arg(long)]
+    pub element: Option<String>,
+    /// Wait until pixel-stable before capturing (ms)
+    #[arg(long)]
+    pub wait_stable_ms: Option<u64>,
+    /// Overall timeout (ms)
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserSnapshotArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub target: Option<String>,
+    /// Diff against a previous snapshot rev — only changed elements
+    #[arg(long)]
+    pub rev: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserEvalArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// JavaScript expression
+    pub expression: String,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub target: Option<String>,
+    /// Await a returned promise
+    #[arg(long, default_value_t = true)]
+    pub await_promise: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserActionArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// click | dblclick | hover | fill | type | press | hotkey | scroll
+    pub verb: String,
+    /// Element: ref (e3), selector (css:#x / text=Sign in), or x,y
+    #[arg(long)]
+    pub target: Option<String>,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub tab: Option<String>,
+    /// Text for fill/type; key for press; "ctrl+c" for hotkey; "dx,dy" scroll
+    #[arg(long)]
+    pub value: Option<String>,
+    /// Secret name — fills without the value crossing the client
+    #[arg(long)]
+    pub secret_ref: Option<String>,
+    /// Skip the actionability gate
+    #[arg(long)]
+    pub force: bool,
+    /// Skip the post-action settle wait
+    #[arg(long)]
+    pub no_settle: bool,
+    /// Per-char delay (ms) for type
+    #[arg(long)]
+    pub delay_ms: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserDownloadArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Download ID
+    pub download_id: String,
+    /// Output file (defaults to the download's filename)
+    #[arg(long)]
+    pub out: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserPdfArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Target (tab) ID
+    pub target: String,
+    /// Output file
+    #[arg(long, default_value = "page.pdf")]
+    pub out: String,
+    /// Landscape orientation
+    #[arg(long)]
+    pub landscape: bool,
+    /// Print background graphics
+    #[arg(long, default_value_t = true)]
+    pub print_background: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserDialogArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub target: Option<String>,
+    /// Accept (default dismiss)
+    #[arg(long)]
+    pub accept: bool,
+    /// Text for a prompt dialog
+    #[arg(long)]
+    pub prompt_text: Option<String>,
+    /// Keep auto-dismissing future dialogs (default: handled here)
+    #[arg(long)]
+    pub auto_dismiss: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserTargetsArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserViewArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Target (tab) ID — headless screencast follows it
+    #[arg(long)]
+    pub target: Option<String>,
+    /// Frames per second (max 30)
+    #[arg(long)]
+    pub fps: Option<u32>,
+    /// JPEG quality 1-100
+    #[arg(long)]
+    pub quality: Option<u32>,
+}
+
+// ── display arg structs ─────────────────────────────────────────────────────
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayIdArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayEnableArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Framebuffer width
+    #[arg(long, default_value_t = 1920)]
+    pub width: u32,
+    /// Framebuffer height
+    #[arg(long, default_value_t = 1080)]
+    pub height: u32,
+    /// X11 display name
+    #[arg(long, default_value = ":0")]
+    pub display: String,
+    /// Window manager (default: none — a bare desktop)
+    #[arg(long)]
+    pub wm: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayShotArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Output file (png/jpeg)
+    #[arg(long, default_value = "screen.png")]
+    pub out: String,
+    /// Wait until pixel-stable before capturing (ms)
+    #[arg(long)]
+    pub wait_stable_ms: Option<u64>,
+    /// Overall timeout (ms)
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
+    /// png | jpeg
+    #[arg(long, default_value = "png")]
+    pub format: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayViewArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Frames per second (max 30)
+    #[arg(long)]
+    pub fps: Option<u32>,
+    /// JPEG quality 1-100
+    #[arg(long)]
+    pub quality: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayWaitArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// How long the screen must be pixel-quiet (ms)
+    #[arg(long, default_value_t = 500)]
+    pub stable_ms: u64,
+    /// Overall timeout (ms)
+    #[arg(long, default_value_t = 10_000)]
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayMouseArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// click | move | scroll
+    pub verb: String,
+    /// X coordinate
+    #[arg(long)]
+    pub x: Option<i32>,
+    /// Y coordinate
+    #[arg(long)]
+    pub y: Option<i32>,
+    /// left | middle | right
+    #[arg(long, default_value = "left")]
+    pub button: String,
+    /// Scroll delta X
+    #[arg(long)]
+    pub dx: Option<i32>,
+    /// Scroll delta Y
+    #[arg(long)]
+    pub dy: Option<i32>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayKeyboardArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// type | press | hotkey
+    pub verb: String,
+    /// Text for `type`; key name for `press`; "ctrl,c" for `hotkey`
+    #[arg(long)]
+    pub value: Option<String>,
+    /// Comma-separated keys for `hotkey`
+    #[arg(long)]
+    pub keys: Option<String>,
+    /// Per-char delay (ms) for `type`
+    #[arg(long)]
+    pub delay_ms: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -273,6 +735,9 @@ pub struct RuntimeCreateArgs {
     /// Network policy IDs to attach at creation (repeatable)
     #[arg(long = "network-policy", value_name = "POLICY_ID")]
     pub network_policies: Vec<String>,
+    /// Storage mount as JSON, e.g. '{"kind":"bucket","path":"/mnt/data","bucket":"<id-or-name>","mode":"rw"}' or '{"kind":"git","path":"/mnt/repo","url":"https://..."}' (repeatable)
+    #[arg(long = "mount", value_name = "JSON")]
+    pub mounts: Vec<String>,
     /// JSON metadata tags
     #[arg(long)]
     pub metadata: Option<String>,
@@ -2311,4 +2776,145 @@ pub struct UpdateArgs {
     /// Install a specific version (e.g. 0.1.0 or v0.1.0). Default: latest release.
     #[arg(long = "version", value_name = "VERSION")]
     pub version: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// storage (managed buckets, bucket links)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Args)]
+pub struct StorageArgs {
+    #[command(subcommand)]
+    pub command: StorageCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StorageCommand {
+    /// Manage managed buckets
+    Bucket(StorageBucketArgs),
+    /// Manage links to buckets you own
+    Link(StorageLinkArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct StorageBucketArgs {
+    #[command(subcommand)]
+    pub command: StorageBucketCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StorageBucketCommand {
+    /// Create a managed bucket
+    Create(StorageBucketCreateArgs),
+    /// List managed buckets
+    List(StorageBucketListArgs),
+    /// Show one bucket
+    Get(StorageBucketIdArgs),
+    /// Delete a bucket (refused while mounted)
+    Delete(StorageBucketIdArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct StorageBucketCreateArgs {
+    /// Bucket name
+    pub name: String,
+    /// Region for the bucket (defaults to the runtime region)
+    #[arg(long)]
+    pub region: Option<String>,
+    /// Project ID for scoping
+    #[arg(long)]
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct StorageBucketListArgs {
+    /// Project ID for scoping
+    #[arg(long)]
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct StorageBucketIdArgs {
+    /// Bucket ID (UUID for delete; ID or name for get)
+    pub id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct StorageLinkArgs {
+    #[command(subcommand)]
+    pub command: StorageLinkCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum StorageLinkCommand {
+    /// Link a bucket you own (S3 or S3-compatible)
+    Create(StorageLinkCreateArgs),
+    /// List bucket links
+    List(StorageLinkListArgs),
+    /// Show one link
+    Get(StorageLinkIdArgs),
+    /// Probe the link's credentials against the provider
+    Verify(StorageLinkIdArgs),
+    /// Delete a link (refused while mounted)
+    Delete(StorageLinkIdArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct StorageLinkCreateArgs {
+    /// Link name
+    pub name: String,
+    /// The bucket name at the provider
+    pub bucket: String,
+    /// Provider: s3 (default) or s3_compatible
+    #[arg(long, default_value = "s3")]
+    pub provider: String,
+    /// Object prefix the link is rooted at
+    #[arg(long)]
+    pub prefix: Option<String>,
+    /// Bucket region
+    #[arg(long)]
+    pub region: Option<String>,
+    /// https endpoint (required for s3_compatible)
+    #[arg(long)]
+    pub endpoint: Option<String>,
+    /// Path-style addressing for s3_compatible endpoints
+    #[arg(long)]
+    pub path_style: bool,
+    /// Auth mode: static (secret references) or oidc (role assumption)
+    #[arg(long, default_value = "static")]
+    pub auth_mode: String,
+    /// Secret provider ID holding the credentials (auth static)
+    #[arg(long)]
+    pub secret_provider_id: Option<String>,
+    /// Secret key holding the access key id (auth static)
+    #[arg(long)]
+    pub access_key_secret: Option<String>,
+    /// Secret key holding the secret key (auth static)
+    #[arg(long)]
+    pub secret_key_secret: Option<String>,
+    /// Secret key holding the session token (auth static)
+    #[arg(long)]
+    pub session_token_secret: Option<String>,
+    /// Role to assume (auth oidc)
+    #[arg(long)]
+    pub role_arn: Option<String>,
+    /// External id for the assume (auth oidc)
+    #[arg(long)]
+    pub external_id: Option<String>,
+    /// Project ID for scoping
+    #[arg(long)]
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct StorageLinkListArgs {
+    /// Project ID for scoping
+    #[arg(long)]
+    pub project_id: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct StorageLinkIdArgs {
+    /// Link ID (UUID for verify/delete; ID or name for get)
+    pub id: String,
 }

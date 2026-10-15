@@ -95,6 +95,7 @@ async fn dispatch(cli: Cli) -> anyhow::Result<()> {
                 }
                 Commands::Agent(args) => cmd::agent::handle(&ctx, args.command).await?,
                 Commands::Billing(args) => cmd::billing::handle(&ctx, args.command).await?,
+                Commands::Storage(args) => cmd::storage::handle(&ctx, args.command).await?,
                 Commands::Validate(args) => cmd::validate::handle(&ctx, args).await?,
                 Commands::Package(args) => cmd::package::handle(&ctx, args).await?,
                 // Already handled above.
