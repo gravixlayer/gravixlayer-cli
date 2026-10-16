@@ -10,6 +10,14 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 ## [Unreleased]
+## [0.1.11] - 2026-10-16
+### Tests
+- `scripts/test_storage_e2e.sh` — opt-in live suite driving the CLI end to
+  end: managed buckets, static-credential bucket links, git mounts,
+  pause/resume, kill-detach, read-only enforcement, and guest credential
+  hygiene. Requires `GRAVIXLAYER_API_KEY` + `GRAVIXLAYER_BASE_URL`; reads
+  `~/.config/gravix-test/aws.env` for test credentials.
+
 ## [0.1.10] - 2026-10-15
 ### Added
 - `storage` — managed buckets and bucket links: `storage bucket
