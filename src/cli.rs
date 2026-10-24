@@ -245,6 +245,8 @@ pub enum RuntimeCommand {
     Browser(RuntimeBrowserArgs),
     /// Control the runtime's display (pixels, input, live view)
     Display(RuntimeDisplayArgs),
+    /// Desktop session components (status, lifecycle, logs)
+    Desktop(RuntimeDesktopArgs),
     /// Storage mounts on this runtime (bucket, link, or git)
     Mounts(RuntimeMountsArgs),
 }
@@ -338,22 +340,66 @@ pub enum RuntimeBrowserCommand {
 
 #[derive(Debug, Subcommand)]
 pub enum RuntimeDisplayCommand {
-    /// Start the display server (Xvfb + window manager)
+    /// Start the display server (attach to the session's or spawn one)
     Enable(RuntimeDisplayEnableArgs),
     /// Stop the display server
     Disable(RuntimeDisplayIdArgs),
     /// Display status
     Status(RuntimeDisplayIdArgs),
+    /// Live geometry as the display reports it now
+    Info(RuntimeDisplayIdArgs),
+    /// Live pointer coordinates
+    Position(RuntimeDisplayIdArgs),
+    /// Key names `keyboard press|hotkey` accept
+    Keys(RuntimeDisplayIdArgs),
     /// Screenshot the screen to a local file
     Screenshot(RuntimeDisplayShotArgs),
     /// Live-watch URL a human can open
     View(RuntimeDisplayViewArgs),
+    /// Stop the live view server and free its port
+    StopView(RuntimeDisplayIdArgs),
     /// Wait until the screen stops changing
     WaitStable(RuntimeDisplayWaitArgs),
-    /// Mouse input (click/move/scroll)
+    /// Mouse input (click/down/up/drag/move/scroll)
     Mouse(RuntimeDisplayMouseArgs),
     /// Keyboard input (type/press/hotkey)
     Keyboard(RuntimeDisplayKeyboardArgs),
+    /// Display clipboard (get/set, text or PNG image)
+    Clipboard(RuntimeDisplayClipboardArgs),
+    /// One agent step: batched inputs → settle → observation
+    Act(RuntimeDisplayActArgs),
+    /// Live-resize the display
+    Resize(RuntimeDisplayResizeArgs),
+    /// Top-level windows
+    Windows(RuntimeDisplayWindowsArgs),
+    /// Window op (focus/close/raise/lower/move/resize/maximize/unmaximize/minimize/fullscreen/unfullscreen)
+    WindowOp(RuntimeDisplayWindowOpArgs),
+    /// Installed applications
+    Apps(RuntimeDisplayIdArgs),
+    /// Launch an installed app by id
+    Launch(RuntimeDisplayLaunchArgs),
+    /// Open a file/URL with its registered handler
+    Open(RuntimeDisplayOpenArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopArgs {
+    #[command(subcommand)]
+    pub command: RuntimeDesktopCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RuntimeDesktopCommand {
+    /// Declared components and their live states
+    Status(RuntimeDisplayIdArgs),
+    /// Start a component
+    Start(RuntimeDesktopComponentArgs),
+    /// Stop a component
+    Stop(RuntimeDesktopComponentArgs),
+    /// Restart a component
+    Restart(RuntimeDesktopComponentArgs),
+    /// Journal logs for a component
+    Logs(RuntimeDesktopLogsArgs),
 }
 
 // ── browser arg structs ─────────────────────────────────────────────────────
@@ -397,7 +443,7 @@ pub struct RuntimeBrowserNavigateArgs {
     /// Target (tab) ID — empty uses the active target
     #[arg(long)]
     pub target: Option<String>,
-    /// load | domcontentloaded | networkidle | none
+    /// load | domcontentloaded | networkidle | commit
     #[arg(long, default_value = "load")]
     pub wait_until: String,
     /// Navigation timeout (ms)
@@ -593,6 +639,12 @@ pub struct RuntimeBrowserViewArgs {
     /// JPEG quality 1-100
     #[arg(long)]
     pub quality: Option<u32>,
+    /// Mint a fresh auth token — invalidates the previous watch URL
+    #[arg(long)]
+    pub rotate_token: bool,
+    /// control (input allowed) | watch (view-only link)
+    #[arg(long)]
+    pub role: Option<String>,
 }
 
 // ── display arg structs ─────────────────────────────────────────────────────
@@ -607,18 +659,21 @@ pub struct RuntimeDisplayIdArgs {
 pub struct RuntimeDisplayEnableArgs {
     /// Runtime ID (UUID)
     pub id: String,
-    /// Framebuffer width
-    #[arg(long, default_value_t = 1920)]
-    pub width: u32,
-    /// Framebuffer height
-    #[arg(long, default_value_t = 1080)]
-    pub height: u32,
+    /// Framebuffer width (default: platform display geometry)
+    #[arg(long)]
+    pub width: Option<u32>,
+    /// Framebuffer height (default: platform display geometry)
+    #[arg(long)]
+    pub height: Option<u32>,
     /// X11 display name
     #[arg(long, default_value = ":0")]
     pub display: String,
     /// Window manager (default: none — a bare desktop)
     #[arg(long)]
     pub wm: Option<String>,
+    /// auto (attach when the image ships a display, else spawn) | spawn | attach
+    #[arg(long)]
+    pub mode: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -634,9 +689,30 @@ pub struct RuntimeDisplayShotArgs {
     /// Overall timeout (ms)
     #[arg(long)]
     pub timeout_ms: Option<u64>,
-    /// png | jpeg
+    /// png | jpeg | webp
     #[arg(long, default_value = "png")]
     pub format: String,
+    /// Crop region as x,y,w,h
+    #[arg(long)]
+    pub region: Option<String>,
+    /// Downscale percentage (e.g. 50)
+    #[arg(long)]
+    pub scale_pct: Option<u32>,
+    /// Fit inside W px preserving aspect
+    #[arg(long)]
+    pub max_width: Option<u32>,
+    /// Fit inside H px preserving aspect
+    #[arg(long)]
+    pub max_height: Option<u32>,
+    /// JPEG/WebP quality 1-100
+    #[arg(long)]
+    pub quality: Option<u32>,
+    /// Composite the pointer into the shot
+    #[arg(long)]
+    pub cursor: bool,
+    /// Skip encode/transfer when the frame still equals this revision
+    #[arg(long)]
+    pub if_rev: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -649,6 +725,15 @@ pub struct RuntimeDisplayViewArgs {
     /// JPEG quality 1-100
     #[arg(long)]
     pub quality: Option<u32>,
+    /// Mint a fresh auth token — invalidates the previous watch URL
+    #[arg(long)]
+    pub rotate_token: bool,
+    /// control (input allowed) | watch (view-only link)
+    #[arg(long)]
+    pub role: Option<String>,
+    /// Stream only this window's pixels
+    #[arg(long)]
+    pub window: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -667,12 +752,12 @@ pub struct RuntimeDisplayWaitArgs {
 pub struct RuntimeDisplayMouseArgs {
     /// Runtime ID (UUID)
     pub id: String,
-    /// click | move | scroll
+    /// click | down | up | drag | move | scroll
     pub verb: String,
-    /// X coordinate
+    /// X coordinate (drag: start X — defaults to current position)
     #[arg(long)]
     pub x: Option<i32>,
-    /// Y coordinate
+    /// Y coordinate (drag: start Y — defaults to current position)
     #[arg(long)]
     pub y: Option<i32>,
     /// left | middle | right
@@ -684,6 +769,27 @@ pub struct RuntimeDisplayMouseArgs {
     /// Scroll delta Y
     #[arg(long)]
     pub dy: Option<i32>,
+    /// Drag destination X
+    #[arg(long)]
+    pub to_x: Option<i32>,
+    /// Drag destination Y
+    #[arg(long)]
+    pub to_y: Option<i32>,
+    /// Drag interpolation steps
+    #[arg(long)]
+    pub steps: Option<u32>,
+    /// Drag duration (ms)
+    #[arg(long)]
+    pub duration_ms: Option<u64>,
+    /// Click count (2 = double-click)
+    #[arg(long)]
+    pub click_count: Option<u32>,
+    /// Comma-separated held modifiers (ctrl,shift,…)
+    #[arg(long)]
+    pub modifiers: Option<String>,
+    /// display | screenshot (map fitted-screenshot pixels back)
+    #[arg(long)]
+    pub coordinate_space: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -701,6 +807,145 @@ pub struct RuntimeDisplayKeyboardArgs {
     /// Per-char delay (ms) for `type`
     #[arg(long)]
     pub delay_ms: Option<u64>,
+    /// type mode: keys (keystrokes) | paste (clipboard + ctrl+v)
+    #[arg(long)]
+    pub mode: Option<String>,
+    /// Comma-separated held modifiers (ctrl,shift,…)
+    #[arg(long)]
+    pub modifiers: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayClipboardArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// get | set
+    pub verb: String,
+    /// Text for `set`
+    #[arg(long)]
+    pub text: Option<String>,
+    /// PNG file to `set` as the clipboard image
+    #[arg(long)]
+    pub png: Option<String>,
+    /// Write a `get` image payload to this file
+    #[arg(long)]
+    pub png_out: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayActArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Actions as a JSON array, or a path to a JSON file (`-` for stdin)
+    #[arg(long)]
+    pub actions: String,
+    /// Extra quiet time required after the last change (ms)
+    #[arg(long)]
+    pub settle_ms: Option<u64>,
+    /// Overall budget for actions + settle (ms)
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
+    /// Observation shot options as JSON (format/region/quality/…/if_rev);
+    /// omit for no image
+    #[arg(long)]
+    pub observe: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayResizeArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// New framebuffer width
+    pub width: u32,
+    /// New framebuffer height
+    pub height: u32,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayWindowsArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Filter by window-class substring
+    #[arg(long)]
+    pub class: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayWindowOpArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Window id (see `windows`)
+    pub window: u32,
+    /// focus | close | raise | lower | move | resize | maximize | unmaximize | minimize | fullscreen | unfullscreen
+    pub op: String,
+    /// Move destination X
+    #[arg(long)]
+    pub x: Option<i32>,
+    /// Move destination Y
+    #[arg(long)]
+    pub y: Option<i32>,
+    /// Resize width
+    #[arg(long)]
+    pub w: Option<u32>,
+    /// Resize height
+    #[arg(long)]
+    pub h: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayLaunchArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Application id (see `apps`)
+    pub app: String,
+    /// URI to substitute into the app's exec line
+    #[arg(long)]
+    pub uri: Option<String>,
+    /// Wait until a new top-level window maps
+    #[arg(long)]
+    pub wait_window: bool,
+    /// Window-wait timeout (ms)
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDisplayOpenArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// File path or URL to open
+    pub target: String,
+    /// Wait until a new top-level window maps
+    #[arg(long)]
+    pub wait_window: bool,
+    /// Window-wait timeout (ms)
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopComponentArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Component name (see `desktop status`)
+    pub name: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopLogsArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Component name (see `desktop status`)
+    pub name: String,
+    /// Resume cursor from a previous page
+    #[arg(long)]
+    pub cursor: Option<String>,
+    /// Cap returned entries
+    #[arg(long)]
+    pub max: Option<u32>,
+    /// Priority filter (e.g. err)
+    #[arg(long)]
+    pub priority: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -726,7 +971,8 @@ pub struct RuntimeCreateArgs {
     /// Key=Value environment variables (repeatable)
     #[arg(long = "env", short = 'e', value_name = "KEY=VALUE")]
     pub env_vars: Vec<String>,
-    /// Agent ID to attach this runtime to
+    /// Removed — agent binding moved to the `mcp` attach spec; passing this
+    /// flag fails with a migration hint instead of a server 400.
     #[arg(long)]
     pub agent_id: Option<String>,
     /// Provider IDs to attach at creation (repeatable)

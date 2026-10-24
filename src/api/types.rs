@@ -202,8 +202,6 @@ pub struct CreateRuntimeRequest {
     pub env_vars: HashMap<String, String>,
     #[serde(skip_serializing_if = "HashMap::is_empty")]
     pub metadata: HashMap<String, String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent_id: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub providers: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]

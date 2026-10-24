@@ -10,6 +10,71 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 ## [Unreleased]
+
+## [0.1.12] - 2026-10-24
+### Added
+- `runtime display enable --mode auto|spawn|attach` — attach to the
+  image's session display or spawn a virtual one.
+- `runtime display info`, `position`, `keys`, `stop-view`, and
+  `clipboard get|set`.
+- `runtime display screenshot --region x,y,w,h --scale-pct N
+  --max-width/--max-height PX --quality N --cursor --format webp`.
+- `runtime display view --role watch` prints the view-only token.
+- `runtime display mouse` verbs `down`, `up`, `drag` (`--to-x/--to-y`,
+  `--steps`, `--duration-ms`) plus `--click-count`, `--modifiers` and
+  `--coordinate-space`; `keyboard` accepts `--mode paste` and
+  `--modifiers`.
+- `runtime desktop status|start|stop|restart|logs` — session component
+  lifecycle and journal paging on desktop-template runtimes.
+- `runtime display act --actions '[…]'|file|- --settle-ms N --timeout-ms N
+  --observe '{…}'` — one agent step per call; prints the observation's
+  `settled`/`rev` and screenshot summary.
+- `runtime display resize W H`, `runtime display windows [--class C]`,
+  `runtime display window-op W OP [--x/--y/--w/--h]`,
+  `runtime display apps`, `runtime display launch APP [--uri U]
+  [--wait-window]`, and `runtime display open TARGET [--wait-window]`.
+- `runtime display screenshot --if-rev N` skips the transfer when the
+  frame is unchanged (prints the revision instead of writing a file);
+  `runtime display view --window ID` streams one window;
+  `runtime display clipboard set --png FILE` / `get --png-out FILE` move
+  clipboard images.
+- `runtime browser view --role watch` mints a view-only link — the
+  returned `view_token` (`&vt=` on the URL) sees frames but can never
+  inject input. `--rotate-token` re-mints the URL's auth token.
+
+### Changed
+- `runtime create --agent`/`--agent-id` exits with an explicit deprecation
+  error instead of sending the removed field — the API rejects `agent_id`
+  outright; per-runtime MCP policy attaches via the `mcp` spec.
+
+### Fixed
+- `runtime browser` percent-encodes `browser_id`, `target_id`, and
+  `download_id` in route paths — an id containing `/`, `?`, or `#`
+  previously corrupted the route.
+- `runtime browser snapshot` no longer fails with "missing field
+  `snapshot_id`" — the API reply never carried one.
+- `runtime browser close`, `runtime display disable`, and every
+  `runtime display mouse` / `keyboard` verb accept the API's `{"ok": true}`
+  reply instead of exiting 1 after the action succeeded.
+- `runtime browser targets` sends `POST` (the route is POST-only); it
+  previously sent `GET` and failed.
+- `runtime browser action scroll --value dx,dy` sends integer deltas; floats
+  were read as 0 by the server, so the scroll did nothing. Non-integer
+  values are now rejected.
+- `runtime browser evaluate` prints the expression's `value` (it printed
+  `null` for every expression) and exits 1 with the message when the
+  expression throws.
+- `runtime display window-op` accepts `fullscreen`/`unfullscreen` — the
+  server supports both ops but the CLI's op list rejected them.
+- `runtime display mouse scroll --x/--y` are now sent when given — the
+  server positions the pointer before the wheel (they were accepted but
+  never transmitted). Omitted axes keep the current pointer position.
+- `runtime display enable --width/--height` are optional again — unset, the
+  platform default geometry applies instead of a forced client-side size.
+- `runtime display view` and `runtime browser view` accept
+  `--rotate-token` to mint a fresh auth token for the watch URL
+  (invalidates the previous one).
+
 ## [0.1.11] - 2026-10-16
 ### Tests
 - `scripts/test_storage_e2e.sh` — opt-in live suite driving the CLI end to

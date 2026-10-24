@@ -1379,7 +1379,6 @@ async fn remote_dev(ctx: &AppContext, args: AgentDevArgs) -> Result<()> {
             internet_access: Some(true),
             env_vars: HashMap::new(),
             metadata: HashMap::new(),
-            agent_id: None,
             providers: Vec::new(),
             network_policy_ids: Vec::new(),
             snapshot: None,
