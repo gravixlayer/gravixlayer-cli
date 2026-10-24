@@ -117,7 +117,7 @@ predicates   = "3"
 tokio        = { version = "1", features = ["full", "test-util"] }
 
 [target.'cfg(windows)'.dependencies]
-zip = { version = "2.4", default-features = false, features = ["deflate"] }
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 # Pre-existing style debt: keep CI green with -D warnings without a mass refactor.
 # Prefer fixing these incrementally; do not expand this list casually.

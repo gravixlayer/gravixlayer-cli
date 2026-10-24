@@ -11,6 +11,11 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+### Security
+- `zip` bumped to 9 (RUSTSEC-2026-0369 — the extractor path is unused;
+  `cargo-deny` now passes clean alongside `h2`, `rustls`,
+  `rustls-webpki`, `tokio`, and `webpki-roots` patch bumps).
+
 ## [0.1.12] - 2026-10-24
 ### Added
 - `runtime display enable --mode auto|spawn|attach` — attach to the
