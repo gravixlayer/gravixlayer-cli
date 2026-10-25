@@ -9,7 +9,45 @@ Pre-releases use `X.Y.Z-alpha.N` (for example `0.2.0-alpha.1`) and are published
 as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
+
 ## [Unreleased]
+
+## [0.1.13] - 2026-10-25
+
+### Changed
+- **`runtime desktop` is now the single computer-use command group** — it
+  absorbs every `runtime display` subcommand (enable/disable/status/info/
+  position/keys/screenshot/mouse/keyboard/clipboard/wait-stable/view/
+  stop-view/act/resize/windows/window-op/apps/launch/open) plus the session
+  ops renamed to `components`, `start`/`stop`/`restart NAME`, `logs`.
+  `runtime display` is removed; `runtime browser` is unchanged.
+- `browser command`/`targets`/`status` now parse the typed target record
+  (target_id/url/title/type/active/loading) instead of the navigate shape
+  or untyped values, so JSON output carries the real fields.
+
+### Added
+- **`runtime browser` reaches flag parity with the SDKs** — every declared
+  flag now lands on the wire: `navigate --target/--wait-until/--timeout-ms`,
+  `screenshot --target/--element/--wait-stable-ms/--timeout-ms/--quality`,
+  `snapshot --target/--full-page/--rev/--filter-role/--filter-name`,
+  `evaluate --target/--await-promise/--world/--timeout-ms`,
+  `action --tab/--secret-ref/--button/--click-count/--delay-ms/
+  --settle-timeout-ms/--target-timeout-ms`,
+  `targets --url/--no-activate` (open a new tab),
+  `pdf --landscape/--print-background/--page-ranges/--paper-*-in/--margin-*`,
+  `downloads --wait-name/--timeout-ms`,
+  `view --target/--fps/--quality/--role/--rotate-token`,
+  `dialog --target/--accept/--prompt-text/--auto-dismiss`, and
+  `open --engine/--headless/--profile-dir/--arg/--url`.
+- `download <id> --out` now falls back to the download's recorded filename
+  before the id.
+- `browser action --target-json` / `browser screenshot --element-json` —
+  full element-target objects verbatim (`pierce`, `inner` frame targets,
+  `exact`, `attrs`) for shadow-DOM / iframe elements the string spec can't
+  express; each conflicts with its string `--target`/`--element` form.
+- `template events <build_id>` — streams the durable build event log
+  (SSE): stored events replay first, then live `step`/`stdout`/`stderr`
+  output until `stream_end`.
 
 ### Security
 - `zip` bumped to 9 (RUSTSEC-2026-0369 — the extractor path is unused;
