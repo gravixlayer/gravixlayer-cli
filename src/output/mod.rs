@@ -45,7 +45,9 @@ impl Spinner {
 
     pub fn finish_ok(&self, msg: impl Into<String>) {
         self.pb.finish_and_clear();
-        println!("\u{2714} {}", msg.into());
+        // Status belongs on stderr — stdout must stay parseable so
+        // `--output json` payloads are never interleaved with progress.
+        eprintln!("\u{2714} {}", msg.into());
     }
 
     #[allow(dead_code)]

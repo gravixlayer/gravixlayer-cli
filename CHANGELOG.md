@@ -12,6 +12,14 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`--output json` stdout stays machine-parseable.** `Spinner::finish_ok`
+  wrote `✔ …` status lines to stdout, so commands like
+  `template build --output json` interleaved progress text into the JSON
+  payload and broke `json.load`/`jq` pipelines. Status now goes to stderr
+  — stdout carries only the requested output.
+
 ## [0.1.13] - 2026-10-25
 
 ### Changed
