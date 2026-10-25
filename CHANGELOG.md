@@ -10,7 +10,7 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 
-## [Unreleased]
+## [0.1.14] - 2026-10-25
 
 ### Fixed
 
