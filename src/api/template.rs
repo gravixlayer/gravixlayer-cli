@@ -73,6 +73,34 @@ impl<'a> TemplateApi<'a> {
             .await
     }
 
+    /// `GET /v1/agents/template/builds/<build_id>/events?after_seq=N`
+    ///
+    /// Returns the raw SSE response — the caller reads `bytes_stream`-style
+    /// frames until `stream_end`. `after_seq` resumes a disconnected
+    /// consumer at its last durable sequence number.
+    pub async fn stream_build_events(
+        &self,
+        build_id: &str,
+        after_seq: i64,
+    ) -> Result<reqwest::Response, ApiError> {
+        let url = self.client.agents_url(&format!(
+            "template/builds/{build_id}/events?after_seq={after_seq}"
+        ));
+        let resp = self
+            .client
+            .get(url)
+            .header(reqwest::header::ACCEPT, "text/event-stream")
+            .send()
+            .await
+            .map_err(ApiError::Connection)?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            return Err(ApiError::from_response(status.as_u16(), body));
+        }
+        Ok(resp)
+    }
+
     /// Poll `build_status` until status is `"completed"` or `"failed"`.
     ///
     /// Returns the final `TemplateBuildStatus`.

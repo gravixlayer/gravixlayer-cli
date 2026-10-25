@@ -375,8 +375,8 @@ impl ApiClient {
         runtime_browser::RuntimeBrowserApi::new(self)
     }
 
-    pub fn runtime_display(&self) -> runtime_browser::RuntimeDisplayApi<'_> {
-        runtime_browser::RuntimeDisplayApi::new(self)
+    pub fn runtime_desktop(&self) -> runtime_browser::RuntimeDesktopApi<'_> {
+        runtime_browser::RuntimeDesktopApi::new(self)
     }
 
     /// Expose the underlying reqwest `Client` for WebSocket upgrades.

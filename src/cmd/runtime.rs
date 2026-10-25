@@ -10,21 +10,21 @@ use crate::api::types::CreateRuntimeRequest;
 use crate::cli::{
     RuntimeBrowserCommand, RuntimeCodeContextCommand, RuntimeCommand, RuntimeCommandsCommand,
     RuntimeCommandsIdArgs, RuntimeCommandsKillArgs, RuntimeCommandsPidArgs, RuntimeConnectArgs,
-    RuntimeContextCommand, RuntimeCreateArgs, RuntimeDesktopCommand, RuntimeDisplayCommand,
-    RuntimeExecArgs, RuntimeFilesCatArgs, RuntimeFilesChmodArgs, RuntimeFilesChownArgs,
-    RuntimeFilesCommand, RuntimeFilesCopyArgs, RuntimeFilesDeleteArgs, RuntimeFilesDownloadArgs,
-    RuntimeFilesFindArgs, RuntimeFilesInfoArgs, RuntimeFilesListArgs, RuntimeFilesMkdirArgs,
-    RuntimeFilesMoveArgs, RuntimeFilesReplaceArgs, RuntimeFilesUploadArgs, RuntimeFilesWatchArgs,
-    RuntimeFilesWriteArgs, RuntimeFilesWriteManyArgs, RuntimeForkArgs, RuntimeGetArgs,
-    RuntimeGitAddArgs, RuntimeGitBranchArgs, RuntimeGitBranchCreateArgs,
-    RuntimeGitBranchDeleteArgs, RuntimeGitCheckoutArgs, RuntimeGitCloneArgs, RuntimeGitCommand,
-    RuntimeGitCommitArgs, RuntimeGitFetchArgs, RuntimeGitPullArgs, RuntimeGitPushArgs,
-    RuntimeGitStatusArgs, RuntimeKillArgs, RuntimeListArgs, RuntimeMetricsArgs,
-    RuntimeMountsCommand, RuntimePauseArgs, RuntimePtyAttachArgs, RuntimePtyCommand,
-    RuntimePtyCreateArgs, RuntimePtyGetArgs, RuntimePtyKillArgs, RuntimePtyListArgs,
-    RuntimePtyResizeArgs, RuntimePtySendArgs, RuntimePtySignalArgs, RuntimeResumeArgs,
-    RuntimeRunArgs, RuntimeServiceCommand, RuntimeServiceListArgs, RuntimeServiceRevokeArgs,
-    RuntimeServiceWebUrlArgs, RuntimeShellArgs, RuntimeSshCommand, RuntimeTimeoutArgs,
+    RuntimeContextCommand, RuntimeCreateArgs, RuntimeDesktopCommand, RuntimeExecArgs,
+    RuntimeFilesCatArgs, RuntimeFilesChmodArgs, RuntimeFilesChownArgs, RuntimeFilesCommand,
+    RuntimeFilesCopyArgs, RuntimeFilesDeleteArgs, RuntimeFilesDownloadArgs, RuntimeFilesFindArgs,
+    RuntimeFilesInfoArgs, RuntimeFilesListArgs, RuntimeFilesMkdirArgs, RuntimeFilesMoveArgs,
+    RuntimeFilesReplaceArgs, RuntimeFilesUploadArgs, RuntimeFilesWatchArgs, RuntimeFilesWriteArgs,
+    RuntimeFilesWriteManyArgs, RuntimeForkArgs, RuntimeGetArgs, RuntimeGitAddArgs,
+    RuntimeGitBranchArgs, RuntimeGitBranchCreateArgs, RuntimeGitBranchDeleteArgs,
+    RuntimeGitCheckoutArgs, RuntimeGitCloneArgs, RuntimeGitCommand, RuntimeGitCommitArgs,
+    RuntimeGitFetchArgs, RuntimeGitPullArgs, RuntimeGitPushArgs, RuntimeGitStatusArgs,
+    RuntimeKillArgs, RuntimeListArgs, RuntimeMetricsArgs, RuntimeMountsCommand, RuntimePauseArgs,
+    RuntimePtyAttachArgs, RuntimePtyCommand, RuntimePtyCreateArgs, RuntimePtyGetArgs,
+    RuntimePtyKillArgs, RuntimePtyListArgs, RuntimePtyResizeArgs, RuntimePtySendArgs,
+    RuntimePtySignalArgs, RuntimeResumeArgs, RuntimeRunArgs, RuntimeServiceCommand,
+    RuntimeServiceListArgs, RuntimeServiceRevokeArgs, RuntimeServiceWebUrlArgs, RuntimeShellArgs,
+    RuntimeSshCommand, RuntimeTimeoutArgs,
 };
 use crate::ctx::AppContext;
 use crate::output::{self, table};
@@ -55,7 +55,6 @@ pub async fn handle(ctx: &mut AppContext, cmd: RuntimeCommand) -> anyhow::Result
         RuntimeCommand::Fork(args) => fork(ctx, args).await,
         RuntimeCommand::Commands(args) => commands(ctx, args.command).await,
         RuntimeCommand::Browser(args) => browser(ctx, args.command).await,
-        RuntimeCommand::Display(args) => display(ctx, args.command).await,
         RuntimeCommand::Desktop(args) => desktop(ctx, args.command).await,
         RuntimeCommand::Mounts(args) => mounts(ctx, args.command).await,
     }
@@ -2139,6 +2138,28 @@ fn browser_target(spec: &str) -> serde_json::Value {
     }
 }
 
+/// `--target` takes the string spec; `--target-json` takes the full wire
+/// object (`by`/`value`/`attrs`/`exact`/`inner`/`pierce`) verbatim, like the
+/// SDKs' dict/object forms — validated as `{by: …}` before it goes out.
+fn browser_target_arg(
+    spec: Option<&str>,
+    json: Option<&str>,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    if let Some(j) = json {
+        let v: serde_json::Value = serde_json::from_str(j).with_context(|| {
+            format!(
+                "target JSON must be an object like {{\"by\":\"css\",\"value\":\"#x\"}}, got {j:?}"
+            )
+        })?;
+        anyhow::ensure!(
+            v.get("by").and_then(|b| b.as_str()).is_some(),
+            "target JSON needs a \"by\" field (ref|css|role|text|xpath|coords|frame)"
+        );
+        return Ok(Some(v));
+    }
+    Ok(spec.map(browser_target))
+}
+
 /// `action scroll --value dx,dy` — the server reads integer deltas; a float
 /// on the wire is read as 0, so anything else is rejected up front.
 fn scroll_deltas(value: &str) -> anyhow::Result<(i64, i64)> {
@@ -2171,7 +2192,14 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             let b = ctx
                 .api
                 .runtime_browser()
-                .open(&a.id, a.headless, a.url.as_deref().unwrap_or(""))
+                .open(
+                    &a.id,
+                    &a.engine,
+                    a.headless,
+                    a.profile_dir.as_deref().unwrap_or(""),
+                    &a.args,
+                    a.url.as_deref().unwrap_or(""),
+                )
                 .await?;
             output::print_or_json(ctx.output, &b, || {
                 println!("browser_id: {}", b.browser_id);
@@ -2199,12 +2227,7 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             output::print_or_json(ctx.output, &s, || {
                 println!("state: {}", s.state);
                 for t in &s.targets {
-                    println!(
-                        "{}	{}	{}",
-                        t["target_id"].as_str().unwrap_or(""),
-                        t["title"].as_str().unwrap_or(""),
-                        t["url"].as_str().unwrap_or(""),
-                    );
+                    println!("{}\t{}\t{}", t.target_id, t.title, t.url);
                 }
             });
         }
@@ -2213,7 +2236,14 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             let r = ctx
                 .api
                 .runtime_browser()
-                .navigate(&a.id, &a.browser, &a.url, &a.wait_until, a.timeout_ms)
+                .navigate(
+                    &a.id,
+                    &a.browser,
+                    &a.url,
+                    a.target.as_deref().unwrap_or(""),
+                    &a.wait_until,
+                    a.timeout_ms,
+                )
                 .await?;
             output::print_or_json(ctx.output, &r, || {
                 println!("{} {}", r.status, r.url);
@@ -2247,14 +2277,17 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             if let Some(t) = a.target.as_deref() {
                 body["target_id"] = serde_json::json!(t);
             }
-            if let Some(e) = a.element.as_deref() {
-                body["element"] = browser_target(e);
+            if let Some(e) = browser_target_arg(a.element.as_deref(), a.element_json.as_deref())? {
+                body["element"] = e;
             }
             if let Some(w) = a.wait_stable_ms {
                 body["wait_stable_ms"] = serde_json::json!(w);
             }
             if let Some(t) = a.timeout_ms {
                 body["timeout_ms"] = serde_json::json!(t);
+            }
+            if let Some(q) = a.quality {
+                body["quality"] = serde_json::json!(q);
             }
             let r = ctx
                 .api
@@ -2276,8 +2309,13 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                 .snapshot(
                     &a.id,
                     &a.browser,
-                    a.target.as_deref().unwrap_or(""),
-                    a.rev.as_deref().unwrap_or(""),
+                    crate::api::runtime_browser::SnapshotOptions {
+                        target_id: a.target.as_deref().unwrap_or(""),
+                        viewport_only: !a.full_page,
+                        rev: a.rev.as_deref().unwrap_or(""),
+                        filter_role: a.filter_role.as_deref().unwrap_or(""),
+                        filter_name: a.filter_name.as_deref().unwrap_or(""),
+                    },
                 )
                 .await?;
             output::print_or_json(ctx.output, &r, || {
@@ -2299,7 +2337,17 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             let r = ctx
                 .api
                 .runtime_browser()
-                .evaluate(&a.id, &a.browser, &a.expression, a.await_promise)
+                .evaluate(
+                    &a.id,
+                    &a.browser,
+                    &a.expression,
+                    crate::api::runtime_browser::EvaluateOptions {
+                        target_id: a.target.as_deref().unwrap_or(""),
+                        await_promise: a.await_promise,
+                        world: &a.world,
+                        timeout_ms: a.timeout_ms,
+                    },
+                )
                 .await?;
             if r.is_error {
                 anyhow::bail!("expression threw: {}", r.error);
@@ -2318,8 +2366,20 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                 "force": a.force,
                 "target_id": a.tab.as_deref().unwrap_or(""),
             });
-            if let Some(t) = a.target.as_deref() {
-                body["target"] = browser_target(t);
+            if let Some(t) = browser_target_arg(a.target.as_deref(), a.target_json.as_deref())? {
+                body["target"] = t;
+            }
+            if let Some(b) = a.button.as_deref() {
+                body["button"] = serde_json::json!(b);
+            }
+            if let Some(n) = a.click_count {
+                body["click_count"] = serde_json::json!(n);
+            }
+            if let Some(t) = a.settle_timeout_ms {
+                body["settle_timeout_ms"] = serde_json::json!(t);
+            }
+            if let Some(t) = a.target_timeout_ms {
+                body["target_timeout_ms"] = serde_json::json!(t);
             }
             match a.verb.as_str() {
                 "click" | "dblclick" | "hover" | "scroll" => {}
@@ -2376,7 +2436,12 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             let r = ctx
                 .api
                 .runtime_browser()
-                .downloads(&a.id, &a.browser)
+                .downloads(
+                    &a.id,
+                    &a.browser,
+                    a.wait_name.as_deref().unwrap_or(""),
+                    a.timeout_ms.unwrap_or(0),
+                )
                 .await?;
             output::print_or_json(ctx.output, &r, || {
                 for d in &r.downloads {
@@ -2401,11 +2466,9 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                 .out
                 .clone()
                 .or_else(|| {
-                    a.out.clone().or_else(|| {
-                        r.entry
-                            .get("filename")
-                            .and_then(|f| f.as_str().map(str::to_string))
-                    })
+                    r.entry
+                        .get("filename")
+                        .and_then(|f| f.as_str().map(str::to_string))
                 })
                 .unwrap_or_else(|| a.download_id.clone());
             let b64 = r
@@ -2421,16 +2484,33 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
         }
         RuntimeBrowserCommand::Pdf(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({
+                "landscape": a.landscape,
+                "print_background": a.print_background,
+            });
+            if let Some(r) = a.page_ranges.as_deref() {
+                body["page_ranges"] = serde_json::json!(r);
+            }
+            if let Some(w) = a.paper_width_in {
+                body["paper_width_in"] = serde_json::json!(w);
+            }
+            if let Some(h) = a.paper_height_in {
+                body["paper_height_in"] = serde_json::json!(h);
+            }
+            for (key, v) in [
+                ("margin_top_in", a.margin_top_in.or(a.margin_in)),
+                ("margin_bottom_in", a.margin_bottom_in.or(a.margin_in)),
+                ("margin_left_in", a.margin_left_in.or(a.margin_in)),
+                ("margin_right_in", a.margin_right_in.or(a.margin_in)),
+            ] {
+                if let Some(m) = v {
+                    body[key] = serde_json::json!(m);
+                }
+            }
             let r = ctx
                 .api
                 .runtime_browser()
-                .pdf(
-                    &a.id,
-                    &a.browser,
-                    &a.target,
-                    a.landscape,
-                    a.print_background,
-                )
+                .pdf(&a.id, &a.browser, &a.target, body)
                 .await?;
             use base64::Engine;
             let bytes = base64::engine::general_purpose::STANDARD
@@ -2447,10 +2527,13 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                 .view(
                     &a.id,
                     &a.browser,
-                    a.fps.unwrap_or(0),
-                    a.quality.unwrap_or(0),
-                    a.rotate_token,
-                    a.role.as_deref().unwrap_or(""),
+                    crate::api::runtime_browser::ViewOptions {
+                        target_id: a.target.as_deref().unwrap_or(""),
+                        fps: a.fps.unwrap_or(0),
+                        quality: a.quality.unwrap_or(0),
+                        rotate_token: a.rotate_token,
+                        role: a.role.as_deref().unwrap_or(""),
+                    },
                 )
                 .await?;
             output::print_or_json(ctx.output, &r, || {
@@ -2478,15 +2561,19 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
         }
         RuntimeBrowserCommand::Targets(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            let r = ctx.api.runtime_browser().targets(&a.id, &a.browser).await?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .targets(
+                    &a.id,
+                    &a.browser,
+                    a.url.as_deref().unwrap_or(""),
+                    !a.no_activate,
+                )
+                .await?;
             output::print_or_json(ctx.output, &r, || {
-                for t in r["targets"].as_array().cloned().unwrap_or_default() {
-                    println!(
-                        "{}\t{}\t{}",
-                        t["target_id"].as_str().unwrap_or(""),
-                        t["type"].as_str().unwrap_or(""),
-                        t["title"].as_str().unwrap_or(""),
-                    );
+                for t in &r.targets {
+                    println!("{}\t{}\t{}", t.target_id, t.r#type, t.title);
                 }
             });
         }
@@ -2495,16 +2582,16 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
 }
 
 // ---------------------------------------------------------------------------
-// Display
+// Desktop
 // ---------------------------------------------------------------------------
 
-async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result<()> {
+async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result<()> {
     match cmd {
-        RuntimeDisplayCommand::Enable(a) => {
+        RuntimeDesktopCommand::Enable(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let s = ctx
                 .api
-                .runtime_display()
+                .runtime_desktop()
                 .enable(
                     &a.id,
                     a.width.unwrap_or(0),
@@ -2519,14 +2606,14 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 println!("{}x{} on {}", s.width, s.height, s.display);
             });
         }
-        RuntimeDisplayCommand::Disable(a) => {
+        RuntimeDesktopCommand::Disable(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            ctx.api.runtime_display().disable(&a.id).await?;
+            ctx.api.runtime_desktop().disable(&a.id).await?;
             println!("display disabled");
         }
-        RuntimeDisplayCommand::Status(a) => {
+        RuntimeDesktopCommand::Status(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            let s = ctx.api.runtime_display().status(&a.id).await?;
+            let s = ctx.api.runtime_desktop().status(&a.id).await?;
             output::print_or_json(ctx.output, &s, || {
                 println!("enabled: {}", s.enabled);
                 if s.enabled {
@@ -2534,9 +2621,9 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
             });
         }
-        RuntimeDisplayCommand::Info(a) => {
+        RuntimeDesktopCommand::Info(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            let s = ctx.api.runtime_display().info(&a.id).await?;
+            let s = ctx.api.runtime_desktop().info(&a.id).await?;
             output::print_or_json(ctx.output, &s, || {
                 println!("enabled: {}", s.enabled);
                 if s.enabled {
@@ -2551,21 +2638,21 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
             });
         }
-        RuntimeDisplayCommand::Position(a) => {
+        RuntimeDesktopCommand::Position(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            let p = ctx.api.runtime_display().position(&a.id).await?;
+            let p = ctx.api.runtime_desktop().position(&a.id).await?;
             output::print_or_json(ctx.output, &p, || {
                 println!("{},{}", p.x, p.y);
             });
         }
-        RuntimeDisplayCommand::Keys(a) => {
+        RuntimeDesktopCommand::Keys(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            let k = ctx.api.runtime_display().keys(&a.id).await?;
+            let k = ctx.api.runtime_desktop().keys(&a.id).await?;
             output::print_or_json(ctx.output, &k, || {
                 println!("{}", k.keys.join(" "));
             });
         }
-        RuntimeDisplayCommand::Screenshot(a) => {
+        RuntimeDesktopCommand::Screenshot(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let mut body = serde_json::json!({
                 "wait_stable_ms": a.wait_stable_ms.unwrap_or(0),
@@ -2599,7 +2686,7 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
             if let Some(v) = a.if_rev {
                 body["if_rev"] = v.into();
             }
-            let r = ctx.api.runtime_display().screenshot(&a.id, body).await?;
+            let r = ctx.api.runtime_desktop().screenshot(&a.id, body).await?;
             if r.unchanged {
                 println!("unchanged (rev {})", r.rev);
             } else {
@@ -2611,11 +2698,11 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 println!("wrote {} ({}x{}, rev {})", a.out, r.width, r.height, r.rev);
             }
         }
-        RuntimeDisplayCommand::View(a) => {
+        RuntimeDesktopCommand::View(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let r = ctx
                 .api
-                .runtime_display()
+                .runtime_desktop()
                 .view(
                     &a.id,
                     a.fps.unwrap_or(0),
@@ -2633,23 +2720,23 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
             });
         }
-        RuntimeDisplayCommand::StopView(a) => {
+        RuntimeDesktopCommand::StopView(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            ctx.api.runtime_display().stop_view(&a.id).await?;
+            ctx.api.runtime_desktop().stop_view(&a.id).await?;
             println!("view stopped");
         }
-        RuntimeDisplayCommand::WaitStable(a) => {
+        RuntimeDesktopCommand::WaitStable(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let r = ctx
                 .api
-                .runtime_display()
+                .runtime_desktop()
                 .wait_stable(&a.id, a.stable_ms, a.timeout_ms)
                 .await?;
             output::print_or_json(ctx.output, &r, || {
                 println!("settled: {} in {}ms", r.settled, r.waited_ms);
             });
         }
-        RuntimeDisplayCommand::Mouse(a) => {
+        RuntimeDesktopCommand::Mouse(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let mods = split_csv(a.modifiers.as_deref());
             let mut body = serde_json::json!({"button": a.button});
@@ -2691,10 +2778,10 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
                 _ => anyhow::bail!("verb must be click|down|up|drag|move|scroll"),
             };
-            ctx.api.runtime_display().input(&a.id, path, body).await?;
+            ctx.api.runtime_desktop().input(&a.id, path, body).await?;
             println!("ok");
         }
-        RuntimeDisplayCommand::Keyboard(a) => {
+        RuntimeDesktopCommand::Keyboard(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let mods = split_csv(a.modifiers.as_deref());
             let (path, body) = match a.verb.as_str() {
@@ -2723,16 +2810,16 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
                 _ => anyhow::bail!("verb must be type|press|hotkey"),
             };
-            ctx.api.runtime_display().input(&a.id, path, body).await?;
+            ctx.api.runtime_desktop().input(&a.id, path, body).await?;
             println!("ok");
         }
-        RuntimeDisplayCommand::Clipboard(a) => {
+        RuntimeDesktopCommand::Clipboard(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             match a.verb.as_str() {
                 "get" => {
                     let r = ctx
                         .api
-                        .runtime_display()
+                        .runtime_desktop()
                         .clipboard(&a.id, "get", "", "")
                         .await?;
                     if !r.text.is_empty() {
@@ -2764,7 +2851,7 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                         None => String::new(),
                     };
                     ctx.api
-                        .runtime_display()
+                        .runtime_desktop()
                         .clipboard(&a.id, "set", a.text.as_deref().unwrap_or(""), &png)
                         .await?;
                     println!("ok");
@@ -2772,7 +2859,7 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 _ => anyhow::bail!("verb must be get|set"),
             }
         }
-        RuntimeDisplayCommand::Act(a) => {
+        RuntimeDesktopCommand::Act(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let raw = match a.actions.as_str() {
                 "-" => {
@@ -2800,7 +2887,7 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 body["observe"] =
                     serde_json::from_str(o).context("observe must be a JSON object")?;
             }
-            let r = ctx.api.runtime_display().act(&a.id, body).await?;
+            let r = ctx.api.runtime_desktop().act(&a.id, body).await?;
             output::print_or_json(ctx.output, &r, || {
                 println!("settled: {} (rev {})", r.settled, r.rev);
                 if let Some(s) = &r.screenshot {
@@ -2815,22 +2902,22 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
             });
         }
-        RuntimeDisplayCommand::Resize(a) => {
+        RuntimeDesktopCommand::Resize(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let s = ctx
                 .api
-                .runtime_display()
+                .runtime_desktop()
                 .resize(&a.id, a.width, a.height)
                 .await?;
             output::print_or_json(ctx.output, &s, || {
                 println!("{}x{} @{}dpi on {}", s.width, s.height, s.dpi, s.display);
             });
         }
-        RuntimeDisplayCommand::Windows(a) => {
+        RuntimeDesktopCommand::Windows(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let r = ctx
                 .api
-                .runtime_display()
+                .runtime_desktop()
                 .windows(&a.id, a.class.as_deref().unwrap_or(""))
                 .await?;
             output::print_or_json(ctx.output, &r, || {
@@ -2853,7 +2940,7 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
             });
         }
-        RuntimeDisplayCommand::WindowOp(a) => {
+        RuntimeDesktopCommand::WindowOp(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             anyhow::ensure!(
                 WINDOW_OPS.contains(&a.op.as_str()),
@@ -2873,21 +2960,21 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
             if let Some(v) = a.h {
                 body["h"] = v.into();
             }
-            let w = ctx.api.runtime_display().window_op(&a.id, body).await?;
+            let w = ctx.api.runtime_desktop().window_op(&a.id, body).await?;
             output::print_or_json(ctx.output, &w, || {
                 println!("{} {}x{} at {},{}", w.id, w.w, w.h, w.x, w.y);
             });
         }
-        RuntimeDisplayCommand::Apps(a) => {
+        RuntimeDesktopCommand::Apps(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            let r = ctx.api.runtime_display().apps(&a.id).await?;
+            let r = ctx.api.runtime_desktop().apps(&a.id).await?;
             output::print_or_json(ctx.output, &r, || {
                 for app in &r.apps {
                     println!("{:<40} {}", app.id, app.name);
                 }
             });
         }
-        RuntimeDisplayCommand::Launch(a) => {
+        RuntimeDesktopCommand::Launch(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let mut body = serde_json::json!({"app": a.app});
             if let Some(v) = a.uri.as_deref() {
@@ -2897,7 +2984,7 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 body["wait_window"] = true.into();
                 body["timeout_ms"] = a.timeout_ms.unwrap_or(10_000).into();
             }
-            let r = ctx.api.runtime_display().app_launch(&a.id, body).await?;
+            let r = ctx.api.runtime_desktop().app_launch(&a.id, body).await?;
             output::print_or_json(ctx.output, &r, || {
                 println!("pid: {}", r.pid);
                 if r.window_id != 0 {
@@ -2905,14 +2992,14 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
             });
         }
-        RuntimeDisplayCommand::Open(a) => {
+        RuntimeDesktopCommand::Open(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             let mut body = serde_json::json!({"target": a.target});
             if a.wait_window {
                 body["wait_window"] = true.into();
                 body["timeout_ms"] = a.timeout_ms.unwrap_or(10_000).into();
             }
-            let r = ctx.api.runtime_display().open(&a.id, body).await?;
+            let r = ctx.api.runtime_desktop().open(&a.id, body).await?;
             output::print_or_json(ctx.output, &r, || {
                 println!("pid: {} ({})", r.pid, r.app);
                 if r.window_id != 0 {
@@ -2920,26 +3007,9 @@ async fn display(ctx: &AppContext, cmd: RuntimeDisplayCommand) -> anyhow::Result
                 }
             });
         }
-    }
-    Ok(())
-}
-
-/// `"a, b ,c"` → `["a","b","c"]` (None → None).
-fn split_csv(s: Option<&str>) -> Option<serde_json::Value> {
-    s.map(|v| {
-        serde_json::json!(v
-            .split(',')
-            .map(|k| k.trim().to_string())
-            .filter(|k| !k.is_empty())
-            .collect::<Vec<_>>())
-    })
-}
-
-async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result<()> {
-    match cmd {
-        RuntimeDesktopCommand::Status(a) => {
+        RuntimeDesktopCommand::Components(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            let s = ctx.api.runtime_display().desktop_status(&a.id).await?;
+            let s = ctx.api.runtime_desktop().desktop_status(&a.id).await?;
             output::print_or_json(ctx.output, &s, || {
                 println!("present: {}", s.present);
                 for c in &s.components {
@@ -2958,7 +3028,7 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
             };
             let c = ctx
                 .api
-                .runtime_display()
+                .runtime_desktop()
                 .desktop_component(&a.id, &a.name, op)
                 .await?;
             output::print_or_json(ctx.output, &c, || {
@@ -2969,7 +3039,7 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
             super::validate_resource_id(&a.id, "runtime")?;
             let r = ctx
                 .api
-                .runtime_display()
+                .runtime_desktop()
                 .desktop_logs(
                     &a.id,
                     &a.name,
@@ -2989,6 +3059,17 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
         }
     }
     Ok(())
+}
+
+/// `"a, b ,c"` → `["a","b","c"]` (None → None).
+fn split_csv(s: Option<&str>) -> Option<serde_json::Value> {
+    s.map(|v| {
+        serde_json::json!(v
+            .split(',')
+            .map(|k| k.trim().to_string())
+            .filter(|k| !k.is_empty())
+            .collect::<Vec<_>>())
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -3037,7 +3118,8 @@ async fn mounts(ctx: &AppContext, cmd: RuntimeMountsCommand) -> anyhow::Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        git_exit_code, git_failed, next_sse_chunk, repository_directory_name, scroll_deltas,
+        browser_target_arg, git_exit_code, git_failed, next_sse_chunk, repository_directory_name,
+        scroll_deltas,
     };
     use crate::api::runtime_git::GitOperationResult;
 
@@ -3158,6 +3240,40 @@ mod tests {
         for bad in ["600", "0.5,1", "a,b", "1,", ""] {
             assert!(scroll_deltas(bad).is_err(), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn browser_target_arg_maps_the_string_spec() {
+        assert_eq!(
+            browser_target_arg(Some("e3"), None).unwrap().unwrap(),
+            serde_json::json!({"by": "ref", "value": "e3"})
+        );
+        assert_eq!(
+            browser_target_arg(Some("css:#q"), None).unwrap().unwrap(),
+            serde_json::json!({"by": "css", "value": "#q"})
+        );
+        assert_eq!(
+            browser_target_arg(Some("10,20"), None).unwrap().unwrap(),
+            serde_json::json!({"by": "coords", "attrs": {"x": "10", "y": "20"}})
+        );
+        assert!(browser_target_arg(None, None).unwrap().is_none());
+    }
+
+    #[test]
+    fn browser_target_arg_passes_full_json_targets_verbatim() {
+        // Shadow-DOM / iframe targets the string spec can't express.
+        let t = browser_target_arg(
+            None,
+            Some(r##"{"by":"css","value":"#q","pierce":true,"inner":{"by":"frame","value":"f"}}"##),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(t["pierce"], true);
+        assert_eq!(t["inner"]["by"], "frame");
+        // Malformed JSON and objects without `by` are rejected up front.
+        assert!(browser_target_arg(None, Some("{nope")).is_err());
+        assert!(browser_target_arg(None, Some("{}")).is_err());
+        assert!(browser_target_arg(None, Some(r#"{"value":"x"}"#)).is_err());
     }
 
     #[test]

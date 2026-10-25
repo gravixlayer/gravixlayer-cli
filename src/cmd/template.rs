@@ -20,6 +20,7 @@ pub async fn handle(ctx: &AppContext, cmd: TemplateCommand) -> anyhow::Result<()
         TemplateCommand::Build(args) => build(ctx, args).await,
         TemplateCommand::Delete(args) => delete(ctx, args).await,
         TemplateCommand::Status(args) => status(ctx, args).await,
+        TemplateCommand::Events(args) => events(ctx, args).await,
     }
 }
 
@@ -349,5 +350,65 @@ async fn status(ctx: &AppContext, args: TemplateBuildStatusArgs) -> anyhow::Resu
     output::print_or_json(ctx.output, &s, || {
         println!("{}", table::build_status_table(&s));
     });
+    Ok(())
+}
+
+/// `template events <build_id>` — stream the durable build event log (SSE):
+/// stored events replay first, then live output until `stream_end`.
+async fn events(ctx: &AppContext, args: TemplateBuildStatusArgs) -> anyhow::Result<()> {
+    use std::io::Write;
+
+    let mut resp = ctx
+        .api
+        .template()
+        .stream_build_events(&args.build_id, 0)
+        .await?;
+    let mut buf = String::new();
+    let mut data = String::new();
+    loop {
+        let Some(chunk) = resp.chunk().await? else {
+            break;
+        };
+        buf.push_str(&String::from_utf8_lossy(&chunk));
+        while let Some(idx) = buf.find("\n\n") {
+            let frame = buf[..idx].to_string();
+            buf.drain(..idx + 2);
+            data.clear();
+            for line in frame.lines() {
+                if let Some(d) = line.strip_prefix("data: ") {
+                    data.push_str(d);
+                }
+            }
+            if data.is_empty() {
+                continue;
+            }
+            let ev: serde_json::Value = match serde_json::from_str(&data) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let kind = ev.get("kind").and_then(|k| k.as_str()).unwrap_or("");
+            let message = ev.get("message").and_then(|m| m.as_str()).unwrap_or("");
+            match kind {
+                "step" => {
+                    let step = ev.get("step").and_then(|s| s.as_str()).unwrap_or("step");
+                    println!("\n▸ {step}");
+                }
+                "stdout" => print!("{message}"),
+                "stderr" => eprint!("{message}"),
+                "status" => {
+                    let st = ev.get("status").and_then(|s| s.as_str()).unwrap_or("");
+                    if st == "failed" && !message.is_empty() {
+                        eprintln!("{message}");
+                    }
+                }
+                "stream_end" => {
+                    let _ = std::io::stdout().flush();
+                    return Ok(());
+                }
+                _ => {}
+            }
+            let _ = std::io::stdout().flush();
+        }
+    }
     Ok(())
 }

@@ -37,7 +37,34 @@ pub struct BrowserStatusResponse {
     #[serde(default)]
     pub state: String,
     #[serde(default)]
-    pub targets: Vec<Value>,
+    pub targets: Vec<TargetInfo>,
+}
+
+/// A browser tab. Command verbs (`back`/`forward`/`reload`/`activate`) and
+/// `targets` both return this shape.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetInfo {
+    #[serde(default)]
+    pub target_id: String,
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub r#type: String,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub loading: bool,
+}
+
+/// `targets` reply — `target_id` is the newly opened tab when `url` was given.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TargetsResponse {
+    #[serde(default)]
+    pub target_id: String,
+    #[serde(default)]
+    pub targets: Vec<TargetInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -342,6 +369,43 @@ pub struct AppLaunchResponse {
     pub mime: String,
 }
 
+/// Options for [`RuntimeBrowserApi::snapshot`].
+#[derive(Debug, Default)]
+pub struct SnapshotOptions<'a> {
+    pub target_id: &'a str,
+    /// Viewport-only digest (default true in the SDKs); `false` digests
+    /// the whole page.
+    pub viewport_only: bool,
+    /// Diff against this previous snapshot rev.
+    pub rev: &'a str,
+    /// Keep only elements with this ARIA role.
+    pub filter_role: &'a str,
+    /// Keep only elements whose name contains this substring.
+    pub filter_name: &'a str,
+}
+
+/// Options for [`RuntimeBrowserApi::evaluate`].
+#[derive(Debug)]
+pub struct EvaluateOptions<'a> {
+    pub target_id: &'a str,
+    pub await_promise: bool,
+    /// `isolated` (default) or `main`.
+    pub world: &'a str,
+    pub timeout_ms: u64,
+}
+
+/// Options for [`RuntimeBrowserApi::view`].
+#[derive(Debug, Default)]
+pub struct ViewOptions<'a> {
+    pub target_id: &'a str,
+    pub fps: u32,
+    pub quality: u32,
+    /// Re-mint the auth token (invalidates the prior URL).
+    pub rotate_token: bool,
+    /// `watch` mints a view-only link.
+    pub role: &'a str,
+}
+
 /// Browser operations against `/v1/agents/runtime/<id>/browser`.
 pub struct RuntimeBrowserApi<'a> {
     client: &'a ApiClient,
@@ -357,21 +421,33 @@ impl<'a> RuntimeBrowserApi<'a> {
             .agents_url(&format!("runtime/{runtime_id}/browser{tail}"))
     }
 
-    /// `POST .../browser/open`
+    /// `POST .../browser/open` — `engine`/`profile_dir`/`args`/`url` are
+    /// optional server-side; empty means defaults and no initial navigation.
     pub async fn open(
         &self,
         runtime_id: &str,
+        engine: &str,
         headless: bool,
+        profile_dir: &str,
+        args: &[String],
         url: &str,
     ) -> Result<BrowserInfo, ApiError> {
         self.client
             .execute("runtime.browser.open", || {
-                self.client
-                    .post(self.url(runtime_id, "/open"))
-                    .json(&json!({
-                        "headless": headless,
-                        "url": url,
-                    }))
+                let mut body = json!({
+                    "engine": engine,
+                    "headless": headless,
+                });
+                if !profile_dir.is_empty() {
+                    body["profile_dir"] = profile_dir.into();
+                }
+                if !args.is_empty() {
+                    body["args"] = args.to_vec().into();
+                }
+                if !url.is_empty() {
+                    body["url"] = url.into();
+                }
+                self.client.post(self.url(runtime_id, "/open")).json(&body)
             })
             .await
     }
@@ -417,6 +493,7 @@ impl<'a> RuntimeBrowserApi<'a> {
         runtime_id: &str,
         browser_id: &str,
         url: &str,
+        target_id: &str,
         wait_until: &str,
         timeout_ms: u64,
     ) -> Result<NavigateResponse, ApiError> {
@@ -425,6 +502,7 @@ impl<'a> RuntimeBrowserApi<'a> {
                 self.client
                     .post(self.url(runtime_id, &format!("/{}/navigate", seg(browser_id))))
                     .json(&json!({
+                        "target_id": target_id,
                         "url": url,
                         "wait_until": wait_until,
                         "timeout_ms": timeout_ms,
@@ -433,14 +511,14 @@ impl<'a> RuntimeBrowserApi<'a> {
             .await
     }
 
-    /// `POST .../browser/<bid>/<verb>` — back / forward / reload.
+    /// `POST .../browser/<bid>/<verb>` — back / forward / reload / activate.
     pub async fn command(
         &self,
         runtime_id: &str,
         browser_id: &str,
         verb: &str,
         target_id: &str,
-    ) -> Result<NavigateResponse, ApiError> {
+    ) -> Result<TargetInfo, ApiError> {
         self.client
             .execute("runtime.browser.command", || {
                 self.client
@@ -471,16 +549,18 @@ impl<'a> RuntimeBrowserApi<'a> {
         &self,
         runtime_id: &str,
         browser_id: &str,
-        target_id: &str,
-        rev: &str,
+        options: SnapshotOptions<'_>,
     ) -> Result<SnapshotResponse, ApiError> {
         self.client
             .execute("runtime.browser.snapshot", || {
                 self.client
                     .post(self.url(runtime_id, &format!("/{}/snapshot", seg(browser_id))))
                     .json(&json!({
-                        "target_id": target_id,
-                        "diff": rev,
+                        "target_id": options.target_id,
+                        "viewport_only": options.viewport_only,
+                        "diff": options.rev,
+                        "filter_role": options.filter_role,
+                        "filter_name": options.filter_name,
                     }))
             })
             .await
@@ -492,15 +572,18 @@ impl<'a> RuntimeBrowserApi<'a> {
         runtime_id: &str,
         browser_id: &str,
         expression: &str,
-        await_promise: bool,
+        options: EvaluateOptions<'_>,
     ) -> Result<EvaluateResponse, ApiError> {
         self.client
             .execute("runtime.browser.evaluate", || {
                 self.client
                     .post(self.url(runtime_id, &format!("/{}/evaluate", seg(browser_id))))
                     .json(&json!({
+                        "target_id": options.target_id,
                         "expression": expression,
-                        "await_promise": await_promise,
+                        "await_promise": options.await_promise,
+                        "timeout_ms": options.timeout_ms,
+                        "world": options.world,
                     }))
             })
             .await
@@ -526,16 +609,25 @@ impl<'a> RuntimeBrowserApi<'a> {
             .await
     }
 
-    /// `GET .../browser/<bid>/downloads`
+    /// `POST .../browser/<bid>/downloads` — empty body lists; `wait_name`
+    /// blocks until a matching download completes.
     pub async fn downloads(
         &self,
         runtime_id: &str,
         browser_id: &str,
+        wait_name: &str,
+        timeout_ms: u64,
     ) -> Result<DownloadsResponse, ApiError> {
         self.client
             .execute("runtime.browser.downloads", || {
+                let mut body = json!({});
+                if !wait_name.is_empty() {
+                    body["wait_name"] = wait_name.into();
+                    body["timeout_ms"] = timeout_ms.into();
+                }
                 self.client
-                    .get(self.url(runtime_id, &format!("/{}/downloads", seg(browser_id))))
+                    .post(self.url(runtime_id, &format!("/{}/downloads", seg(browser_id))))
+                    .json(&body)
             })
             .await
     }
@@ -565,8 +657,7 @@ impl<'a> RuntimeBrowserApi<'a> {
         runtime_id: &str,
         browser_id: &str,
         target_id: &str,
-        landscape: bool,
-        print_background: bool,
+        body: Value,
     ) -> Result<ImageResponse, ApiError> {
         self.client
             .execute("runtime.browser.pdf", || {
@@ -575,10 +666,7 @@ impl<'a> RuntimeBrowserApi<'a> {
                         runtime_id,
                         &format!("/{}/targets/{}/pdf", seg(browser_id), seg(target_id)),
                     ))
-                    .json(&json!({
-                        "landscape": landscape,
-                        "print_background": print_background,
-                    }))
+                    .json(&body)
             })
             .await
     }
@@ -608,14 +696,20 @@ impl<'a> RuntimeBrowserApi<'a> {
             .map(|_: Value| ())
     }
 
-    /// `POST .../browser/<bid>/targets` — an empty body lists the tabs
-    /// (the route is POST-only; a non-empty `url` would open a new tab).
-    pub async fn targets(&self, runtime_id: &str, browser_id: &str) -> Result<Value, ApiError> {
+    /// `POST .../browser/<bid>/targets` — empty `url` lists the tabs; a
+    /// non-empty `url` opens a new tab (`activate` brings it to front).
+    pub async fn targets(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        url: &str,
+        activate: bool,
+    ) -> Result<TargetsResponse, ApiError> {
         self.client
             .execute("runtime.browser.targets", || {
                 self.client
                     .post(self.url(runtime_id, &format!("/{}/targets", seg(browser_id))))
-                    .json(&json!({}))
+                    .json(&json!({ "url": url, "activate": activate }))
             })
             .await
     }
@@ -628,20 +722,18 @@ impl<'a> RuntimeBrowserApi<'a> {
         &self,
         runtime_id: &str,
         browser_id: &str,
-        fps: u32,
-        quality: u32,
-        rotate_token: bool,
-        role: &str,
+        options: ViewOptions<'_>,
     ) -> Result<ViewResponse, ApiError> {
         self.client
             .execute("runtime.browser.view", || {
                 let mut body = json!({
-                    "fps": fps,
-                    "quality": quality,
-                    "rotate_token": rotate_token,
+                    "target_id": options.target_id,
+                    "fps": options.fps,
+                    "quality": options.quality,
+                    "rotate_token": options.rotate_token,
                 });
-                if !role.is_empty() {
-                    body["role"] = role.into();
+                if !options.role.is_empty() {
+                    body["role"] = options.role.into();
                 }
                 self.client
                     .post(self.url(runtime_id, &format!("/{}/view", seg(browser_id))))
@@ -652,11 +744,11 @@ impl<'a> RuntimeBrowserApi<'a> {
 }
 
 /// Display operations against `/v1/agents/runtime/<id>/display`.
-pub struct RuntimeDisplayApi<'a> {
+pub struct RuntimeDesktopApi<'a> {
     client: &'a ApiClient,
 }
 
-impl<'a> RuntimeDisplayApi<'a> {
+impl<'a> RuntimeDesktopApi<'a> {
     pub fn new(client: &'a ApiClient) -> Self {
         Self { client }
     }
@@ -1035,7 +1127,14 @@ mod tests {
         let api = client(&server);
         let r = api
             .runtime_browser()
-            .snapshot(RT, "b1", "", "")
+            .snapshot(
+                RT,
+                "b1",
+                super::SnapshotOptions {
+                    viewport_only: true,
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         assert_eq!(r.rev, "3");
@@ -1061,7 +1160,7 @@ mod tests {
         }
         let api = client(&server);
         api.runtime_browser().close(RT, "b1").await.unwrap();
-        let display = api.runtime_display();
+        let display = api.runtime_desktop();
         display.disable(RT).await.unwrap();
         display
             .input(
@@ -1085,7 +1184,7 @@ mod tests {
             .mock_async(|when, then| {
                 when.method(POST)
                     .path(path("browser/b1/targets"))
-                    .json_body(json!({}));
+                    .json_body(json!({"url": "", "activate": true}));
                 then.status(200).json_body(json!({
                     "target_id": "",
                     "targets": [{"target_id": "A1B2", "url": "https://example.com/"}],
@@ -1094,11 +1193,11 @@ mod tests {
             .await;
         let r = client(&server)
             .runtime_browser()
-            .targets(RT, "b1")
+            .targets(RT, "b1", "", true)
             .await
             .unwrap();
         listed.assert_async().await;
-        assert_eq!(r["targets"][0]["target_id"], "A1B2");
+        assert_eq!(r.targets[0].target_id, "A1B2");
     }
 
     #[tokio::test]
@@ -1113,7 +1212,17 @@ mod tests {
             .await;
         let r = client(&server)
             .runtime_browser()
-            .evaluate(RT, "b1", "({n: 1})", true)
+            .evaluate(
+                RT,
+                "b1",
+                "({n: 1})",
+                super::EvaluateOptions {
+                    target_id: "",
+                    await_promise: true,
+                    world: "isolated",
+                    timeout_ms: 30_000,
+                },
+            )
             .await
             .unwrap();
         assert_eq!(r.value, json!({"n": 1}));
@@ -1147,21 +1256,399 @@ mod tests {
         let browser_view = server
             .mock_async(|when, then| {
                 when.method(POST).path(path("browser/b1/view")).json_body(
-                    json!({"fps": 0, "quality": 0, "rotate_token": true, "role": "watch"}),
+                    json!({"target_id": "", "fps": 0, "quality": 0, "rotate_token": true, "role": "watch"}),
                 );
                 then.status(201).json_body(svc);
             })
             .await;
         let api = client(&server);
-        api.runtime_display()
+        api.runtime_desktop()
             .view(RT, 0, 0, true, "", 0)
             .await
             .unwrap();
         api.runtime_browser()
-            .view(RT, "b1", 0, 0, true, "watch")
+            .view(
+                RT,
+                "b1",
+                super::ViewOptions {
+                    rotate_token: true,
+                    role: "watch",
+                    ..Default::default()
+                },
+            )
             .await
             .unwrap();
         display_view.assert_async().await;
         browser_view.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn navigate_forwards_target_wait_and_timeout() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/navigate"))
+                    .json_body(json!({
+                        "target_id": "T1",
+                        "url": "https://example.com/",
+                        "wait_until": "networkidle",
+                        "timeout_ms": 12_000,
+                    }));
+                then.status(200).json_body(json!({
+                    "url": "https://example.com/", "title": "Example",
+                    "status": 200, "navigated": true, "settled": true,
+                }));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_browser()
+            .navigate(
+                RT,
+                "b1",
+                "https://example.com/",
+                "T1",
+                "networkidle",
+                12_000,
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert!(r.navigated);
+        assert_eq!(r.status, 200);
+    }
+
+    #[tokio::test]
+    async fn command_uses_the_verb_path_and_returns_target_info() {
+        // The wire reply is a TargetInfo — url/title/active/loading, not a
+        // navigate record.
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/back"))
+                    .json_body(json!({"target_id": "T7"}));
+                then.status(200).json_body(json!({
+                    "target_id": "T7", "url": "https://prev.example/",
+                    "title": "Prev", "type": "page",
+                    "active": true, "loading": false,
+                }));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_browser()
+            .command(RT, "b1", "back", "T7")
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r.target_id, "T7");
+        assert!(r.active);
+        assert_eq!(r.url, "https://prev.example/");
+    }
+
+    #[tokio::test]
+    async fn open_forwards_engine_profile_args_and_url() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/open"))
+                    .json_body(json!({
+                        "engine": "chromium",
+                        "headless": true,
+                        "profile_dir": "/tmp/prof",
+                        "args": ["--window-size=800,600"],
+                        "url": "https://example.com/",
+                    }));
+                then.status(200).json_body(json!({
+                    "browser_id": "b9", "engine": "chromium", "headless": true,
+                }));
+            })
+            .await;
+        let b = client(&server)
+            .runtime_browser()
+            .open(
+                RT,
+                "chromium",
+                true,
+                "/tmp/prof",
+                &["--window-size=800,600".to_string()],
+                "https://example.com/",
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(b.browser_id, "b9");
+    }
+
+    #[tokio::test]
+    async fn snapshot_forwards_all_filters_and_the_diff_rev() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/snapshot"))
+                    .json_body(json!({
+                        "target_id": "T1",
+                        "viewport_only": false,
+                        "diff": "2",
+                        "filter_role": "link",
+                        "filter_name": "next",
+                    }));
+                then.status(200).json_body(json!({
+                    "url": "u", "title": "t", "rev": "3", "elements": [],
+                }));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .snapshot(
+                RT,
+                "b1",
+                super::SnapshotOptions {
+                    target_id: "T1",
+                    viewport_only: false,
+                    rev: "2",
+                    filter_role: "link",
+                    filter_name: "next",
+                },
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn evaluate_forwards_target_world_and_timeout() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/evaluate"))
+                    .json_body(json!({
+                        "target_id": "T2",
+                        "expression": "document.title",
+                        "await_promise": true,
+                        "timeout_ms": 5_000,
+                        "world": "main",
+                    }));
+                then.status(200).json_body(json!({
+                    "value": "Example", "error": "", "is_error": false,
+                }));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_browser()
+            .evaluate(
+                RT,
+                "b1",
+                "document.title",
+                super::EvaluateOptions {
+                    target_id: "T2",
+                    await_promise: true,
+                    world: "main",
+                    timeout_ms: 5_000,
+                },
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r.value, "Example");
+    }
+
+    #[tokio::test]
+    async fn action_posts_the_body_verbatim_to_the_verb_route() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/actions/fill"))
+                    .json_body(json!({
+                        "target_id": "T1", "selector": "#q", "text": "hi",
+                        "secret_ref": "", "force": false,
+                        "settle_timeout_ms": 0, "target_timeout_ms": 0,
+                    }));
+                then.status(200)
+                    .json_body(json!({"settled": true, "url": "https://x/"}));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_browser()
+            .action(
+                RT,
+                "b1",
+                "fill",
+                json!({
+                    "target_id": "T1", "selector": "#q", "text": "hi",
+                    "secret_ref": "", "force": false,
+                    "settle_timeout_ms": 0, "target_timeout_ms": 0,
+                }),
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert!(r.settled);
+        assert_eq!(r.url, "https://x/");
+    }
+
+    #[tokio::test]
+    async fn targets_with_a_url_opens_and_activates() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/targets"))
+                    .json_body(json!({"url": "https://new.example/", "activate": true}));
+                then.status(200).json_body(json!({
+                    "target_id": "T9",
+                    "targets": [{"target_id": "T9", "url": "https://new.example/", "type": "page"}],
+                }));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_browser()
+            .targets(RT, "b1", "https://new.example/", true)
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r.target_id, "T9");
+        assert_eq!(r.targets[0].r#type, "page");
+    }
+
+    #[tokio::test]
+    async fn downloads_waits_only_when_asked() {
+        // With a wait_name the wait fields go on the wire; without it the
+        // body stays empty so the server returns the current list.
+        let server = MockServer::start_async().await;
+        let listed = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/downloads"))
+                    .json_body(json!({}));
+                then.status(200).json_body(json!({"downloads": []}));
+            })
+            .await;
+        let waited = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/downloads"))
+                    .json_body(json!({"wait_name": "report", "timeout_ms": 60_000}));
+                then.status(200).json_body(json!({
+                    "downloads": [{"download_id": "d1", "filename": "report.csv"}],
+                }));
+            })
+            .await;
+        let api = client(&server);
+        api.runtime_browser()
+            .downloads(RT, "b1", "", 0)
+            .await
+            .unwrap();
+        let r = api
+            .runtime_browser()
+            .downloads(RT, "b1", "report", 60_000)
+            .await
+            .unwrap();
+        listed.assert_async().await;
+        waited.assert_async().await;
+        assert_eq!(r.downloads.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn dialog_forwards_every_flag() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/dialog"))
+                    .json_body(json!({
+                        "target_id": "T3", "accept": true,
+                        "prompt_text": "answer", "auto_dismiss": true,
+                    }));
+                then.status(200).json_body(json!({"ok": true}));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .dialog(RT, "b1", "T3", true, "answer", true)
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn pdf_uses_the_target_scoped_route() {
+        // Target ids with path-unsafe bytes must stay inside one segment.
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/targets/T%2F1/pdf"))
+                    .json_body(json!({"landscape": true}));
+                then.status(200)
+                    .json_body(json!({"data": "aGk=", "format": "pdf"}));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_browser()
+            .pdf(RT, "b1", "T/1", json!({"landscape": true}))
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r.data, "aGk=");
+    }
+
+    #[tokio::test]
+    async fn ids_with_path_unsafe_bytes_stay_in_one_segment() {
+        // `/`, `?`, `#` in a browser or download id must not inject routes.
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(GET).path(path("browser/b%3F1/downloads/d%23x"));
+                then.status(200).json_body(json!({
+                    "entry": {"download_id": "d#x"}, "data": null,
+                }));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .download_get(RT, "b?1", "d#x")
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn view_omits_an_empty_role() {
+        // `role` is conditional — absent means a full-control watch link.
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/view"))
+                    .json_body(json!({
+                        "target_id": "T1", "fps": 15, "quality": 70,
+                        "rotate_token": false,
+                    }));
+                then.status(201).json_body(json!({
+                    "url": "https://x.service.example", "service_url": "",
+                    "browser_url": "", "port": 0, "expires_at": "",
+                }));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .view(
+                RT,
+                "b1",
+                super::ViewOptions {
+                    target_id: "T1",
+                    fps: 15,
+                    quality: 70,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
     }
 }

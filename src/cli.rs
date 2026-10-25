@@ -243,9 +243,7 @@ pub enum RuntimeCommand {
     Commands(RuntimeCommandsArgs),
     /// Control the runtime's browser (open, navigate, act, snapshot, view)
     Browser(RuntimeBrowserArgs),
-    /// Control the runtime's display (pixels, input, live view)
-    Display(RuntimeDisplayArgs),
-    /// Desktop session components (status, lifecycle, logs)
+    /// Control the runtime's desktop (pixels, input, windows, apps, view, session components)
     Desktop(RuntimeDesktopArgs),
     /// Storage mounts on this runtime (bucket, link, or git)
     Mounts(RuntimeMountsArgs),
@@ -297,9 +295,9 @@ pub struct RuntimeBrowserArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayArgs {
+pub struct RuntimeDesktopArgs {
     #[command(subcommand)]
-    pub command: RuntimeDisplayCommand,
+    pub command: RuntimeDesktopCommand,
 }
 
 #[derive(Debug, Subcommand)]
@@ -324,8 +322,8 @@ pub enum RuntimeBrowserCommand {
     Evaluate(RuntimeBrowserEvalArgs),
     /// Click/dblclick/hover/fill/type/press/hotkey/scroll an element
     Action(RuntimeBrowserActionArgs),
-    /// List downloads
-    Downloads(RuntimeBrowserIdArgs),
+    /// List downloads (`--wait-name` blocks until a file lands)
+    Downloads(RuntimeBrowserDownloadsArgs),
     /// Fetch a download's bytes to a local file
     Download(RuntimeBrowserDownloadArgs),
     /// Render a target to PDF
@@ -339,64 +337,54 @@ pub enum RuntimeBrowserCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum RuntimeDisplayCommand {
-    /// Start the display server (attach to the session's or spawn one)
-    Enable(RuntimeDisplayEnableArgs),
-    /// Stop the display server
-    Disable(RuntimeDisplayIdArgs),
-    /// Display status
-    Status(RuntimeDisplayIdArgs),
-    /// Live geometry as the display reports it now
-    Info(RuntimeDisplayIdArgs),
-    /// Live pointer coordinates
-    Position(RuntimeDisplayIdArgs),
-    /// Key names `keyboard press|hotkey` accept
-    Keys(RuntimeDisplayIdArgs),
-    /// Screenshot the screen to a local file
-    Screenshot(RuntimeDisplayShotArgs),
-    /// Live-watch URL a human can open
-    View(RuntimeDisplayViewArgs),
-    /// Stop the live view server and free its port
-    StopView(RuntimeDisplayIdArgs),
-    /// Wait until the screen stops changing
-    WaitStable(RuntimeDisplayWaitArgs),
-    /// Mouse input (click/down/up/drag/move/scroll)
-    Mouse(RuntimeDisplayMouseArgs),
-    /// Keyboard input (type/press/hotkey)
-    Keyboard(RuntimeDisplayKeyboardArgs),
-    /// Display clipboard (get/set, text or PNG image)
-    Clipboard(RuntimeDisplayClipboardArgs),
-    /// One agent step: batched inputs → settle → observation
-    Act(RuntimeDisplayActArgs),
-    /// Live-resize the display
-    Resize(RuntimeDisplayResizeArgs),
-    /// Top-level windows
-    Windows(RuntimeDisplayWindowsArgs),
-    /// Window op (focus/close/raise/lower/move/resize/maximize/unmaximize/minimize/fullscreen/unfullscreen)
-    WindowOp(RuntimeDisplayWindowOpArgs),
-    /// Installed applications
-    Apps(RuntimeDisplayIdArgs),
-    /// Launch an installed app by id
-    Launch(RuntimeDisplayLaunchArgs),
-    /// Open a file/URL with its registered handler
-    Open(RuntimeDisplayOpenArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct RuntimeDesktopArgs {
-    #[command(subcommand)]
-    pub command: RuntimeDesktopCommand,
-}
-
-#[derive(Debug, Subcommand)]
 pub enum RuntimeDesktopCommand {
-    /// Declared components and their live states
-    Status(RuntimeDisplayIdArgs),
-    /// Start a component
+    /// Start the display server (attach to the session's or spawn one)
+    Enable(RuntimeDesktopEnableArgs),
+    /// Stop the display server
+    Disable(RuntimeDesktopIdArgs),
+    /// Display status
+    Status(RuntimeDesktopIdArgs),
+    /// Live geometry as the display reports it now
+    Info(RuntimeDesktopIdArgs),
+    /// Live pointer coordinates
+    Position(RuntimeDesktopIdArgs),
+    /// Key names `keyboard press|hotkey` accept
+    Keys(RuntimeDesktopIdArgs),
+    /// Screenshot the screen to a local file
+    Screenshot(RuntimeDesktopShotArgs),
+    /// Live-watch URL a human can open
+    View(RuntimeDesktopViewArgs),
+    /// Stop the live view server and free its port
+    StopView(RuntimeDesktopIdArgs),
+    /// Wait until the screen stops changing
+    WaitStable(RuntimeDesktopWaitArgs),
+    /// Mouse input (click/down/up/drag/move/scroll)
+    Mouse(RuntimeDesktopMouseArgs),
+    /// Keyboard input (type/press/hotkey)
+    Keyboard(RuntimeDesktopKeyboardArgs),
+    /// Display clipboard (get/set, text or PNG image)
+    Clipboard(RuntimeDesktopClipboardArgs),
+    /// One agent step: batched inputs → settle → observation
+    Act(RuntimeDesktopActArgs),
+    /// Live-resize the display
+    Resize(RuntimeDesktopResizeArgs),
+    /// Top-level windows
+    Windows(RuntimeDesktopWindowsArgs),
+    /// Window op (focus/close/raise/lower/move/resize/maximize/unmaximize/minimize/fullscreen/unfullscreen)
+    WindowOp(RuntimeDesktopWindowOpArgs),
+    /// Installed applications
+    Apps(RuntimeDesktopIdArgs),
+    /// Launch an installed app by id
+    Launch(RuntimeDesktopLaunchArgs),
+    /// Open a file/URL with its registered handler
+    Open(RuntimeDesktopOpenArgs),
+    /// Declared session components and their live states
+    Components(RuntimeDesktopIdArgs),
+    /// Start a session component
     Start(RuntimeDesktopComponentArgs),
-    /// Stop a component
+    /// Stop a session component
     Stop(RuntimeDesktopComponentArgs),
-    /// Restart a component
+    /// Restart a session component
     Restart(RuntimeDesktopComponentArgs),
     /// Journal logs for a component
     Logs(RuntimeDesktopLogsArgs),
@@ -426,6 +414,15 @@ pub struct RuntimeBrowserOpenArgs {
     /// Run headless (no window on the display)
     #[arg(long)]
     pub headless: bool,
+    /// Browser engine
+    #[arg(long, default_value = "chromium")]
+    pub engine: String,
+    /// Persistent profile directory inside the runtime
+    #[arg(long)]
+    pub profile_dir: Option<String>,
+    /// Extra engine arguments (repeatable)
+    #[arg(long = "arg")]
+    pub args: Vec<String>,
     /// Initial URL
     #[arg(long)]
     pub url: Option<String>,
@@ -487,12 +484,18 @@ pub struct RuntimeBrowserShotArgs {
     /// Element ref/selector to clip to (e.g. e3, css:#el)
     #[arg(long)]
     pub element: Option<String>,
+    /// Full element-target object as JSON (shadow DOM / iframe clips)
+    #[arg(long, conflicts_with = "element")]
+    pub element_json: Option<String>,
     /// Wait until pixel-stable before capturing (ms)
     #[arg(long)]
     pub wait_stable_ms: Option<u64>,
     /// Overall timeout (ms)
     #[arg(long)]
     pub timeout_ms: Option<u64>,
+    /// JPEG quality 0–100 — ignored for PNG
+    #[arg(long)]
+    pub quality: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -505,9 +508,18 @@ pub struct RuntimeBrowserSnapshotArgs {
     /// Target (tab) ID
     #[arg(long)]
     pub target: Option<String>,
+    /// Digest the whole page, not just the viewport
+    #[arg(long)]
+    pub full_page: bool,
     /// Diff against a previous snapshot rev — only changed elements
     #[arg(long)]
     pub rev: Option<String>,
+    /// Keep only elements with this ARIA role
+    #[arg(long)]
+    pub filter_role: Option<String>,
+    /// Keep only elements whose name contains this substring
+    #[arg(long)]
+    pub filter_name: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -525,6 +537,12 @@ pub struct RuntimeBrowserEvalArgs {
     /// Await a returned promise
     #[arg(long, default_value_t = true)]
     pub await_promise: bool,
+    /// JavaScript world: isolated (default) | main
+    #[arg(long, default_value = "isolated")]
+    pub world: String,
+    /// Execution timeout (ms)
+    #[arg(long, default_value_t = 30_000)]
+    pub timeout_ms: u64,
 }
 
 #[derive(Debug, Args)]
@@ -539,6 +557,11 @@ pub struct RuntimeBrowserActionArgs {
     /// Element: ref (e3), selector (css:#x / text=Sign in), or x,y
     #[arg(long)]
     pub target: Option<String>,
+    /// Full element-target object as JSON — `{"by":"css","value":"#x",
+    /// "pierce":true,"inner":{"by":"frame","value":"f"}` for shadow
+    /// DOM / iframe targets
+    #[arg(long, conflicts_with = "target")]
+    pub target_json: Option<String>,
     /// Target (tab) ID
     #[arg(long)]
     pub tab: Option<String>,
@@ -548,6 +571,12 @@ pub struct RuntimeBrowserActionArgs {
     /// Secret name — fills without the value crossing the client
     #[arg(long)]
     pub secret_ref: Option<String>,
+    /// Mouse button for click/dblclick: left (default) | right | middle
+    #[arg(long)]
+    pub button: Option<String>,
+    /// Click count for click (2 = double-click)
+    #[arg(long)]
+    pub click_count: Option<u32>,
     /// Skip the actionability gate
     #[arg(long)]
     pub force: bool,
@@ -557,6 +586,12 @@ pub struct RuntimeBrowserActionArgs {
     /// Per-char delay (ms) for type
     #[arg(long)]
     pub delay_ms: Option<u64>,
+    /// Settle-wait timeout (ms) — 0 uses the server default
+    #[arg(long)]
+    pub settle_timeout_ms: Option<u64>,
+    /// Target-resolution bound (ms) — 0 uses the server default
+    #[arg(long)]
+    pub target_timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -571,6 +606,21 @@ pub struct RuntimeBrowserDownloadArgs {
     /// Output file (defaults to the download's filename)
     #[arg(long)]
     pub out: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserDownloadsArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Block until a download whose filename contains this lands
+    #[arg(long)]
+    pub wait_name: Option<String>,
+    /// Wait bound (ms) — 0 uses the server default
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
 }
 
 #[derive(Debug, Args)]
@@ -591,6 +641,30 @@ pub struct RuntimeBrowserPdfArgs {
     /// Print background graphics
     #[arg(long, default_value_t = true)]
     pub print_background: bool,
+    /// Page ranges (e.g. "1-3,5")
+    #[arg(long)]
+    pub page_ranges: Option<String>,
+    /// Paper width in inches (0 = letter 8.5)
+    #[arg(long)]
+    pub paper_width_in: Option<f64>,
+    /// Paper height in inches (0 = letter 11)
+    #[arg(long)]
+    pub paper_height_in: Option<f64>,
+    /// Uniform margin in inches (sets all four sides)
+    #[arg(long)]
+    pub margin_in: Option<f64>,
+    /// Top margin in inches (overrides --margin-in)
+    #[arg(long)]
+    pub margin_top_in: Option<f64>,
+    /// Bottom margin in inches (overrides --margin-in)
+    #[arg(long)]
+    pub margin_bottom_in: Option<f64>,
+    /// Left margin in inches (overrides --margin-in)
+    #[arg(long)]
+    pub margin_left_in: Option<f64>,
+    /// Right margin in inches (overrides --margin-in)
+    #[arg(long)]
+    pub margin_right_in: Option<f64>,
 }
 
 #[derive(Debug, Args)]
@@ -621,6 +695,12 @@ pub struct RuntimeBrowserTargetsArgs {
     /// Browser ID (e.g. b1)
     #[arg(long, default_value = "b1")]
     pub browser: String,
+    /// Open a new tab at this URL instead of listing
+    #[arg(long)]
+    pub url: Option<String>,
+    /// Don't bring the new tab to the front
+    #[arg(long)]
+    pub no_activate: bool,
 }
 
 #[derive(Debug, Args)]
@@ -650,13 +730,13 @@ pub struct RuntimeBrowserViewArgs {
 // ── display arg structs ─────────────────────────────────────────────────────
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayIdArgs {
+pub struct RuntimeDesktopIdArgs {
     /// Runtime ID (UUID)
     pub id: String,
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayEnableArgs {
+pub struct RuntimeDesktopEnableArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// Framebuffer width (default: platform display geometry)
@@ -677,7 +757,7 @@ pub struct RuntimeDisplayEnableArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayShotArgs {
+pub struct RuntimeDesktopShotArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// Output file (png/jpeg)
@@ -716,7 +796,7 @@ pub struct RuntimeDisplayShotArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayViewArgs {
+pub struct RuntimeDesktopViewArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// Frames per second (max 30)
@@ -737,7 +817,7 @@ pub struct RuntimeDisplayViewArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayWaitArgs {
+pub struct RuntimeDesktopWaitArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// How long the screen must be pixel-quiet (ms)
@@ -749,7 +829,7 @@ pub struct RuntimeDisplayWaitArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayMouseArgs {
+pub struct RuntimeDesktopMouseArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// click | down | up | drag | move | scroll
@@ -793,7 +873,7 @@ pub struct RuntimeDisplayMouseArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayKeyboardArgs {
+pub struct RuntimeDesktopKeyboardArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// type | press | hotkey
@@ -816,7 +896,7 @@ pub struct RuntimeDisplayKeyboardArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayClipboardArgs {
+pub struct RuntimeDesktopClipboardArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// get | set
@@ -833,7 +913,7 @@ pub struct RuntimeDisplayClipboardArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayActArgs {
+pub struct RuntimeDesktopActArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// Actions as a JSON array, or a path to a JSON file (`-` for stdin)
@@ -852,7 +932,7 @@ pub struct RuntimeDisplayActArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayResizeArgs {
+pub struct RuntimeDesktopResizeArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// New framebuffer width
@@ -862,7 +942,7 @@ pub struct RuntimeDisplayResizeArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayWindowsArgs {
+pub struct RuntimeDesktopWindowsArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// Filter by window-class substring
@@ -871,7 +951,7 @@ pub struct RuntimeDisplayWindowsArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayWindowOpArgs {
+pub struct RuntimeDesktopWindowOpArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// Window id (see `windows`)
@@ -893,7 +973,7 @@ pub struct RuntimeDisplayWindowOpArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayLaunchArgs {
+pub struct RuntimeDesktopLaunchArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// Application id (see `apps`)
@@ -910,7 +990,7 @@ pub struct RuntimeDisplayLaunchArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct RuntimeDisplayOpenArgs {
+pub struct RuntimeDesktopOpenArgs {
     /// Runtime ID (UUID)
     pub id: String,
     /// File path or URL to open
@@ -1894,6 +1974,8 @@ pub enum TemplateCommand {
     Delete(TemplateDeleteArgs),
     /// Poll build status
     Status(TemplateBuildStatusArgs),
+    /// Stream a build's live event log (replays stored events, then follows)
+    Events(TemplateBuildStatusArgs),
 }
 
 #[derive(Debug, Args)]
