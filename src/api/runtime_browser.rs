@@ -204,11 +204,15 @@ pub struct DesktopComponentInfo {
     #[serde(default)]
     pub unit: String,
     #[serde(default)]
-    pub state: String,
+    pub active: String,
     #[serde(default)]
-    pub sub_state: String,
+    pub sub: String,
     #[serde(default)]
-    pub description: String,
+    pub result: String,
+    #[serde(default)]
+    pub restarts: u64,
+    #[serde(default)]
+    pub started_usec: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -226,11 +230,15 @@ pub struct DesktopStatusResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DesktopLogEntry {
     #[serde(default)]
-    pub timestamp: String,
+    pub identifier: String,
+    #[serde(default)]
+    pub unit: String,
     #[serde(default)]
     pub message: String,
     #[serde(default)]
     pub priority: i32,
+    #[serde(default)]
+    pub usec: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -238,9 +246,7 @@ pub struct DesktopLogsResponse {
     #[serde(default)]
     pub entries: Vec<DesktopLogEntry>,
     #[serde(default)]
-    pub next_cursor: String,
-    #[serde(default)]
-    pub truncated: bool,
+    pub cursor: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

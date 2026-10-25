@@ -10,6 +10,18 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 
+## [Unreleased]
+
+### Fixed
+
+- **`runtime desktop components`/`start`/`stop`/`restart`/`logs` read the
+  live wire schema.** The response structs still parsed the retired
+  `state`/`sub_state`/`description` and `timestamp`/`next_cursor`/
+  `truncated` fields, so component state rendered blank and log paging
+  never surfaced a cursor. Structs now match the wire — components carry
+  `active`/`sub`/`result`/`restarts`/`started_usec`, log entries carry
+  `identifier`/`unit`/`priority`/`usec`, and paging uses `cursor`.
+
 ## [0.1.14] - 2026-10-25
 
 ### Fixed

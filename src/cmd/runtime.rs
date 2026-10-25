@@ -3013,7 +3013,7 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
             output::print_or_json(ctx.output, &s, || {
                 println!("present: {}", s.present);
                 for c in &s.components {
-                    println!("{:<24} {} ({}/{})", c.name, c.unit, c.state, c.sub_state);
+                    println!("{:<24} {} ({}/{})", c.name, c.unit, c.active, c.sub);
                 }
             });
         }
@@ -3032,7 +3032,7 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
                 .desktop_component(&a.id, &a.name, op)
                 .await?;
             output::print_or_json(ctx.output, &c, || {
-                println!("{}: {}/{}", c.name, c.state, c.sub_state);
+                println!("{}: {}/{}", c.name, c.active, c.sub);
             });
         }
         RuntimeDesktopCommand::Logs(a) => {
@@ -3050,10 +3050,10 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
                 .await?;
             output::print_or_json(ctx.output, &r, || {
                 for e in &r.entries {
-                    println!("{} [{}] {}", e.timestamp, e.priority, e.message);
+                    println!("{} [{}] {}", e.usec, e.priority, e.message);
                 }
-                if r.truncated {
-                    eprintln!("(truncated — resume with --cursor {})", r.next_cursor);
+                if !r.cursor.is_empty() {
+                    eprintln!("(more — resume with --cursor {})", r.cursor);
                 }
             });
         }
