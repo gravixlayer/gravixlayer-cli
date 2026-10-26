@@ -21,6 +21,10 @@ resolve the latest **stable** release.
   never surfaced a cursor. Structs now match the wire — components carry
   `active`/`sub`/`result`/`restarts`/`started_usec`, log entries carry
   `identifier`/`unit`/`priority`/`usec`, and paging uses `cursor`.
+- **`browser open --arg` and `pty create --arg` accept hyphen values.**
+  Engine/shell flags (`--arg "--start-maximized"`, `--arg "-l"`) were
+  rejected as unknown CLI flags; both pass-through args now use
+  `allow_hyphen_values` like every clap pass-through does.
 
 ## [0.1.14] - 2026-10-25
 

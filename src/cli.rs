@@ -421,7 +421,7 @@ pub struct RuntimeBrowserOpenArgs {
     #[arg(long)]
     pub profile_dir: Option<String>,
     /// Extra engine arguments (repeatable)
-    #[arg(long = "arg")]
+    #[arg(long = "arg", allow_hyphen_values = true)]
     pub args: Vec<String>,
     /// Initial URL
     #[arg(long)]
@@ -1524,7 +1524,7 @@ pub struct RuntimePtyCreateArgs {
     #[arg(long)]
     pub shell: Option<String>,
     /// Arguments passed to the shell (repeatable, applied in order)
-    #[arg(long = "arg", value_name = "ARG")]
+    #[arg(long = "arg", value_name = "ARG", allow_hyphen_values = true)]
     pub args: Vec<String>,
     /// Initial working directory
     #[arg(long)]
