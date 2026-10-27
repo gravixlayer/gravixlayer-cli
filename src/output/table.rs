@@ -998,11 +998,14 @@ pub fn pty_session_table(sessions: &[PtySession]) -> Table {
 // ---------------------------------------------------------------------------
 
 pub fn bucket_table(buckets: &[StorageBucket]) -> Table {
-    let mut t = base_table(&["ID", "NAME", "BUCKET", "REGION", "STATUS", "CREATED"]);
+    let mut t = base_table(&[
+        "ID", "NAME", "SOURCE", "BUCKET", "REGION", "STATUS", "CREATED",
+    ]);
     for b in buckets {
         t.add_row(vec![
             Cell::new(&b.id),
             Cell::new(&b.name),
+            Cell::new(&b.source),
             Cell::new(&b.bucket),
             Cell::new(&b.region),
             status_cell(&b.status),
@@ -1016,57 +1019,42 @@ pub fn bucket_detail_table(b: &StorageBucket) -> Table {
     let mut t = detail_table(&["FIELD", "VALUE"]);
     t.add_row(vec![Cell::new("id"), Cell::new(&b.id)]);
     t.add_row(vec![Cell::new("name"), Cell::new(&b.name)]);
+    t.add_row(vec![Cell::new("source"), Cell::new(&b.source)]);
     t.add_row(vec![Cell::new("provider"), Cell::new(&b.provider)]);
     t.add_row(vec![Cell::new("bucket"), Cell::new(&b.bucket)]);
+    if let Some(ref prefix) = b.prefix {
+        if !prefix.is_empty() {
+            t.add_row(vec![Cell::new("prefix"), Cell::new(prefix)]);
+        }
+    }
     t.add_row(vec![Cell::new("region"), Cell::new(&b.region)]);
+    if let Some(ref ep) = b.endpoint {
+        t.add_row(vec![Cell::new("endpoint"), Cell::new(ep)]);
+    }
+    if let Some(path_style) = b.path_style {
+        t.add_row(vec![
+            Cell::new("path_style"),
+            Cell::new(path_style.to_string()),
+        ]);
+    }
+    if let Some(ref auth_mode) = b.auth_mode {
+        if !auth_mode.is_empty() {
+            t.add_row(vec![Cell::new("auth_mode"), Cell::new(auth_mode)]);
+        }
+    }
     t.add_row(vec![Cell::new("status"), status_cell(&b.status)]);
     if !b.error.is_empty() {
         t.add_row(vec![Cell::new("error"), Cell::new(&b.error)]);
+    }
+    if let Some(ref verify_error) = b.verify_error {
+        if !verify_error.is_empty() {
+            t.add_row(vec![Cell::new("verify_error"), Cell::new(verify_error)]);
+        }
     }
     t.add_row(vec![
         Cell::new("created"),
         Cell::new(format_relative(b.created_at.as_deref())),
     ]);
-    t
-}
-
-pub fn link_table(links: &[BucketLink]) -> Table {
-    let mut t = base_table(&["ID", "NAME", "PROVIDER", "BUCKET", "PREFIX", "STATUS"]);
-    for l in links {
-        t.add_row(vec![
-            Cell::new(&l.id),
-            Cell::new(&l.name),
-            Cell::new(&l.provider),
-            Cell::new(&l.bucket),
-            Cell::new(&l.prefix),
-            status_cell(&l.status),
-        ]);
-    }
-    t
-}
-
-pub fn link_detail_table(l: &BucketLink) -> Table {
-    let mut t = detail_table(&["FIELD", "VALUE"]);
-    t.add_row(vec![Cell::new("id"), Cell::new(&l.id)]);
-    t.add_row(vec![Cell::new("name"), Cell::new(&l.name)]);
-    t.add_row(vec![Cell::new("provider"), Cell::new(&l.provider)]);
-    t.add_row(vec![Cell::new("bucket"), Cell::new(&l.bucket)]);
-    if !l.prefix.is_empty() {
-        t.add_row(vec![Cell::new("prefix"), Cell::new(&l.prefix)]);
-    }
-    t.add_row(vec![Cell::new("region"), Cell::new(&l.region)]);
-    if let Some(ref ep) = l.endpoint {
-        t.add_row(vec![Cell::new("endpoint"), Cell::new(ep)]);
-    }
-    t.add_row(vec![
-        Cell::new("path_style"),
-        Cell::new(if l.path_style { "true" } else { "false" }),
-    ]);
-    t.add_row(vec![Cell::new("auth_mode"), Cell::new(&l.auth_mode)]);
-    t.add_row(vec![Cell::new("status"), status_cell(&l.status)]);
-    if !l.verify_error.is_empty() {
-        t.add_row(vec![Cell::new("verify_error"), Cell::new(&l.verify_error)]);
-    }
     t
 }
 

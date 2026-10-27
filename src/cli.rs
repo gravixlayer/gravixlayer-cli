@@ -97,7 +97,7 @@ pub enum Commands {
     Validate(ValidateArgs),
     /// Package an agent project into a deployable archive
     Package(PackageArgs),
-    /// Manage buckets, bucket links, and mounts
+    /// Manage buckets and runtime mounts
     Storage(StorageArgs),
     /// Generate shell completions
     Completions(CompletionsArgs),
@@ -245,7 +245,7 @@ pub enum RuntimeCommand {
     Browser(RuntimeBrowserArgs),
     /// Control the runtime's desktop (pixels, input, windows, apps, view, session components)
     Desktop(RuntimeDesktopArgs),
-    /// Storage mounts on this runtime (bucket, link, or git)
+    /// Storage mounts on this runtime (bucket or git)
     Mounts(RuntimeMountsArgs),
 }
 
@@ -257,7 +257,7 @@ pub struct RuntimeMountsArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum RuntimeMountsCommand {
-    /// Attach a bucket, link, or git repository at a guest path
+    /// Attach a bucket or git repository at a guest path
     Attach(RuntimeMountAttachArgs),
     /// List mounts attached to the runtime
     List(RuntimeMountsListArgs),
@@ -3107,7 +3107,7 @@ pub struct UpdateArgs {
 }
 
 // ---------------------------------------------------------------------------
-// storage (managed buckets, bucket links)
+// storage (buckets)
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Args)]
@@ -3118,10 +3118,8 @@ pub struct StorageArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum StorageCommand {
-    /// Manage managed buckets
+    /// Manage S3 and S3-compatible buckets
     Bucket(StorageBucketArgs),
-    /// Manage links to buckets you own
-    Link(StorageLinkArgs),
 }
 
 #[derive(Debug, Args)]
@@ -3134,11 +3132,15 @@ pub struct StorageBucketArgs {
 pub enum StorageBucketCommand {
     /// Create a managed bucket
     Create(StorageBucketCreateArgs),
-    /// List managed buckets
+    /// Connect an existing S3 or S3-compatible bucket
+    Connect(StorageBucketConnectArgs),
+    /// List buckets
     List(StorageBucketListArgs),
     /// Show one bucket
     Get(StorageBucketIdArgs),
-    /// Delete a bucket (refused while mounted)
+    /// Verify an external bucket's credentials
+    Verify(StorageBucketIdArgs),
+    /// Delete or disconnect a bucket (refused while mounted)
     Delete(StorageBucketIdArgs),
 }
 
@@ -3168,35 +3170,15 @@ pub struct StorageBucketIdArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct StorageLinkArgs {
-    #[command(subcommand)]
-    pub command: StorageLinkCommand,
-}
-
-#[derive(Debug, Subcommand)]
-pub enum StorageLinkCommand {
-    /// Link a bucket you own (S3 or S3-compatible)
-    Create(StorageLinkCreateArgs),
-    /// List bucket links
-    List(StorageLinkListArgs),
-    /// Show one link
-    Get(StorageLinkIdArgs),
-    /// Probe the link's credentials against the provider
-    Verify(StorageLinkIdArgs),
-    /// Delete a link (refused while mounted)
-    Delete(StorageLinkIdArgs),
-}
-
-#[derive(Debug, Args)]
-pub struct StorageLinkCreateArgs {
-    /// Link name
+pub struct StorageBucketConnectArgs {
+    /// Bucket name shown in Gravix Layer
     pub name: String,
-    /// The bucket name at the provider
+    /// The existing bucket name at the provider
     pub bucket: String,
     /// Provider: s3 (default) or s3_compatible
     #[arg(long, default_value = "s3")]
     pub provider: String,
-    /// Object prefix the link is rooted at
+    /// Object prefix the bucket connection is rooted at
     #[arg(long)]
     pub prefix: Option<String>,
     /// Bucket region
@@ -3232,17 +3214,4 @@ pub struct StorageLinkCreateArgs {
     /// Project ID for scoping
     #[arg(long)]
     pub project_id: Option<String>,
-}
-
-#[derive(Debug, Args)]
-pub struct StorageLinkListArgs {
-    /// Project ID for scoping
-    #[arg(long)]
-    pub project_id: Option<String>,
-}
-
-#[derive(Debug, Args)]
-pub struct StorageLinkIdArgs {
-    /// Link ID (UUID for verify/delete; ID or name for get)
-    pub id: String,
 }

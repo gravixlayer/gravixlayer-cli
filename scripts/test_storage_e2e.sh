@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Live E2E for storage mounts driven through the CLI — buckets, bucket links,
-# git mounts, lifecycle, credential hygiene. Requires a built `gravixlayer`
+# Live E2E for storage mounts driven through the CLI — buckets (managed and
+# external), git mounts, lifecycle, credential hygiene. Requires a built `gravixlayer`
 # binary, jq, and a live deployment.
 #
 # Config — env or ~/.config/gravix-test/aws.env:
@@ -35,7 +35,7 @@ fi
 command -v jq >/dev/null || { echo "jq required" >&2; exit 1; }
 
 PASS=0; FAIL=0
-RUNTIMES=(); BUCKETS=(); LINKS=(); PROVIDERS=()
+RUNTIMES=(); BUCKETS=(); PROVIDERS=()
 
 gxj() { "$GX" --base-url "$BASE_URL" --output json "$@"; }
 ok()   { PASS=$((PASS+1)); echo "  PASS $1"; }
@@ -73,7 +73,6 @@ cleanup() {
   echo "== cleanup =="
   for r in "${RUNTIMES[@]:-}"; do gxj runtime kill "$r" >/dev/null 2>&1; done
   sleep 2
-  for l in "${LINKS[@]:-}";     do gxj storage link delete "$l" >/dev/null 2>&1; done
   for b in "${BUCKETS[@]:-}";   do gxj storage bucket delete "$b" >/dev/null 2>&1; done
   for p in "${PROVIDERS[@]:-}"; do gxj provider delete "$p" >/dev/null 2>&1; done
 }
@@ -168,36 +167,36 @@ while (( SECONDS < end )); do
 done
 (( DETACHED )) && ok "kill detaches" || bad "attachments still attached after kill"
 
-# ------------------------------------------------------------- bucket link ----
+# ---------------------------------------------------------- external bucket ----
 
 if [[ -n "${AWS_ACCESS_KEY_ID:-}" && -n "${AWS_SECRET_ACCESS_KEY:-}" ]]; then
-  echo "== bucket link (static creds) =="
+  echo "== external bucket (static creds) =="
   PROV="$(gxj provider create "e2e-aws-$RUN_ID" \
     --secret "AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID" \
     --secret "AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY" | jq -r '.id')"
   PROVIDERS+=("$PROV")
   [[ -n "$PROV" && "$PROV" != null ]] && ok "provider create" || bad "provider create"
 
-  LINK="$(gxj storage link create "e2e-link-$RUN_ID" "$TEST_BUCKET" \
+  EXTERNAL="$(gxj storage bucket connect "e2e-external-$RUN_ID" "$TEST_BUCKET" \
     --provider s3 --region "$TEST_REGION" --auth-mode static \
     --secret-provider-id "$PROV" \
     --access-key-secret AWS_ACCESS_KEY_ID \
     --secret-key-secret AWS_SECRET_ACCESS_KEY | jq -r '.id')"
-  LINKS+=("$LINK")
-  [[ -n "$LINK" && "$LINK" != null ]] && ok "link create" || bad "link create"
-  [[ "$(gxj storage link verify "$LINK" | jq -r '.status')" == "verified" ]] \
-    && ok "link verify" || bad "link verify"
+  BUCKETS+=("$EXTERNAL")
+  [[ -n "$EXTERNAL" && "$EXTERNAL" != null ]] && ok "external bucket connect" || bad "external bucket connect"
+  [[ "$(gxj storage bucket verify "$EXTERNAL" | jq -r '.status')" == "verified" ]] \
+    && ok "external bucket verify" || bad "external bucket verify"
 
   RT4="$(gxj runtime create --template "$TEMPLATE" --wait \
-    --mount "{\"kind\":\"bucket\",\"path\":\"/mnt/byo\",\"link\":\"$LINK\",\"mode\":\"rw\"}" \
+    --mount "{\"kind\":\"bucket\",\"path\":\"/mnt/byo\",\"bucket\":\"$EXTERNAL\",\"mode\":\"rw\"}" \
     | jq -r '.runtime_id // .id')"
   RUNTIMES+=("$RT4")
   wait_status "$RT4" running && wait_mount "$RT4" /mnt/byo \
-    && ok "link mount attached" || bad "link mount"
-  exec_in "$RT4" "echo via-link-$RUN_ID > /mnt/byo/v.txt && sync && cat /mnt/byo/v.txt" \
-    | grep -q "via-link-$RUN_ID" && ok "link io" || bad "link io"
+    && ok "external bucket mounted" || bad "external bucket mount"
+  exec_in "$RT4" "echo via-external-$RUN_ID > /mnt/byo/v.txt && sync && cat /mnt/byo/v.txt" \
+    | grep -q "via-external-$RUN_ID" && ok "external bucket io" || bad "external bucket io"
 else
-  echo "== bucket link SKIPPED (no AWS creds) =="
+  echo "== external bucket SKIPPED (no AWS creds) =="
 fi
 
 # -------------------------------------------------------------------- git ----

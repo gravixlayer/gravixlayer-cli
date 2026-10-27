@@ -909,13 +909,13 @@ pub struct AttachNetworkPolicyRequest {
 }
 
 // ---------------------------------------------------------------------------
-// Storage mounts (/v1/agents/buckets, /v1/agents/bucket-links, runtime mounts)
+// Storage mounts (/v1/agents/buckets, runtime mounts)
 // ---------------------------------------------------------------------------
 
-/// A mount request: bucket, link, or git repository at a guest path.
+/// A mount request: bucket or git repository at a guest path.
 ///
-/// `bucket` and `link` are mutually exclusive. Git mounts are read-only and
-/// take an https clone URL; credentials are secret-provider references.
+/// Git mounts are read-only and take an https clone URL; credentials are
+/// secret-provider references.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MountSpec {
@@ -927,8 +927,6 @@ pub struct MountSpec {
     pub required: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bucket: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub link: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -974,14 +972,8 @@ pub fn validate_mount(m: &MountSpec) -> Result<(), String> {
         }
     }
     if m.kind == "bucket" {
-        match (m.bucket.as_deref(), m.link.as_deref()) {
-            (Some(_), Some(_)) => {
-                return Err("a bucket mount takes bucket or link, not both".to_string())
-            }
-            (None, None) => {
-                return Err("a bucket mount needs bucket or link (id or name)".to_string())
-            }
-            _ => {}
+        if m.bucket.as_deref().is_none_or(str::is_empty) {
+            return Err("a bucket mount needs bucket (id or name)".to_string());
         }
     } else {
         match &m.url {
@@ -1009,12 +1001,16 @@ pub fn validate_mount(m: &MountSpec) -> Result<(), String> {
                 || m.git_ref.is_some()
                 || m.depth.is_some()
                 || m.refresh_seconds.is_some()
+                || m.credential_provider.is_some()
+                || m.credential_secret.is_some()
             {
-                return Err("url/git_ref/depth/refresh_seconds are for git mounts".into());
+                return Err(
+                    "url/git_ref/depth/refresh_seconds/credential_* are for git mounts".into(),
+                );
             }
         }
-        "git" if m.bucket.is_some() || m.link.is_some() => {
-            return Err("bucket/link are for bucket mounts, not git".into());
+        "git" if m.bucket.is_some() => {
+            return Err("bucket is for bucket mounts, not git".into());
         }
         "git" => {}
         _ => {}
@@ -1030,12 +1026,14 @@ pub struct CreateBucketRequest {
     pub region: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub external: Option<ExternalBucketRequest>,
 }
 
-/// Payload for `POST /v1/agents/bucket-links`.
+/// `external` create body — connects an existing bucket instead of creating a
+/// managed one. Credential fields are secret references, never secret values.
 #[derive(Debug, Clone, Serialize)]
-pub struct CreateBucketLinkRequest {
-    pub name: String,
+pub struct ExternalBucketRequest {
     pub provider: String,
     pub bucket: String,
     pub auth_mode: String,
@@ -1059,59 +1057,42 @@ pub struct CreateBucketLinkRequest {
     pub role_arn: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub external_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
 }
 
-/// Response for `GET /v1/agents/buckets` and `/bucket-links`.
+/// Response for `GET /v1/agents/buckets`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageBucket {
     pub id: String,
     #[serde(default)]
     pub name: String,
     #[serde(default)]
+    pub source: String,
+    #[serde(default)]
     pub provider: String,
     #[serde(default)]
     pub region: String,
     #[serde(default)]
     pub bucket: String,
+    #[serde(default)]
+    pub prefix: Option<String>,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub path_style: Option<bool>,
+    #[serde(default)]
+    pub auth_mode: Option<String>,
     #[serde(default)]
     pub status: String,
     #[serde(default)]
     pub error: String,
     #[serde(default)]
-    pub created_at: Option<String>,
-    #[serde(default)]
-    pub updated_at: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BucketLink {
-    pub id: String,
-    #[serde(default)]
-    pub name: String,
-    #[serde(default)]
-    pub provider: String,
-    #[serde(default)]
-    pub bucket: String,
-    #[serde(default)]
-    pub prefix: String,
-    #[serde(default)]
-    pub region: String,
-    #[serde(default)]
-    pub endpoint: Option<String>,
-    #[serde(default)]
-    pub path_style: bool,
-    #[serde(default)]
-    pub auth_mode: String,
-    #[serde(default)]
-    pub status: String,
-    #[serde(default)]
-    pub verify_error: String,
+    pub verify_error: Option<String>,
     #[serde(default)]
     pub last_verified_at: Option<String>,
     #[serde(default)]
     pub created_at: Option<String>,
+    #[serde(default)]
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1123,19 +1104,6 @@ pub struct BucketEnvelope {
 pub struct BucketListEnvelope {
     #[serde(default)]
     pub buckets: Vec<StorageBucket>,
-    #[serde(default)]
-    pub total: i64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LinkEnvelope {
-    pub link: BucketLink,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LinkListEnvelope {
-    #[serde(default)]
-    pub links: Vec<BucketLink>,
     #[serde(default)]
     pub total: i64,
 }
@@ -1202,7 +1170,6 @@ mod tests {
             mode: None,
             required: None,
             bucket: None,
-            link: None,
             url: None,
             git_ref: None,
             depth: None,
@@ -1237,8 +1204,7 @@ mod tests {
     fn mount_rejects_bad_combinations() {
         let cases: Vec<MountSpec> = vec![
             MountSpec {
-                bucket: Some("a".into()),
-                link: Some("b".into()),
+                bucket: Some("".into()),
                 ..mount("bucket", "/m")
             },
             mount("bucket", "/m"), // no target
@@ -1268,6 +1234,12 @@ mod tests {
             MountSpec {
                 bucket: Some("a".into()),
                 mode: Some("exec".into()),
+                ..mount("bucket", "/m")
+            },
+            MountSpec {
+                bucket: Some("a".into()),
+                credential_provider: Some("p".into()),
+                credential_secret: Some("s".into()),
                 ..mount("bucket", "/m")
             },
         ];

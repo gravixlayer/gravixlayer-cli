@@ -10,7 +10,19 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 
-## [Unreleased]
+## [0.1.15] - 2026-10-27
+
+### Changed
+
+- **Storage buckets are one public resource.** `storage bucket create`
+  provisions a managed bucket and `storage bucket connect` connects an existing
+  S3/S3-compatible bucket; `list`, `get`, `verify`, and `delete` operate on
+  both through `source`. Mounts take only `"bucket"`; `storage link` is
+  removed.
+- **Mount validation rejects credential fields on bucket mounts.**
+  `credential_provider`/`credential_secret` are git-mount fields; a bucket
+  mount carrying them now fails locally instead of being silently ignored —
+  matching the other stray-field refusals and both SDKs.
 
 ### Fixed
 
@@ -145,23 +157,23 @@ resolve the latest **stable** release.
 ## [0.1.11] - 2026-10-16
 ### Tests
 - `scripts/test_storage_e2e.sh` — opt-in live suite driving the CLI end to
-  end: managed buckets, static-credential bucket links, git mounts,
+  end: managed buckets, static-credential external buckets, git mounts,
   pause/resume, kill-detach, read-only enforcement, and guest credential
   hygiene. Requires `GRAVIXLAYER_API_KEY` + `GRAVIXLAYER_BASE_URL`; reads
   `~/.config/gravix-test/aws.env` for test credentials.
 
 ## [0.1.10] - 2026-10-15
 ### Added
-- `storage` — managed buckets and bucket links: `storage bucket
-  create|list|get|delete` and `storage link create|list|get|verify|delete`.
-  Link auth is static (secret-provider key references — secret material
-  never crosses the CLI) or `oidc` (role assumption); `s3_compatible`
-  links take an `--endpoint` (https) and `--path-style`.
-- `runtime mounts` — `attach --mount '<json>'` (bucket/link/git at a guest
+- `storage` — managed and external buckets: `storage bucket
+  create|connect|list|get|verify|delete`. External bucket auth is static
+  (secret-provider key references — secret material never crosses the CLI) or
+  `oidc` (role assumption); `s3_compatible` buckets take an `--endpoint`
+  (https) and `--path-style`.
+- `runtime mounts` — `attach --mount '<json>'` (bucket/git at a guest
   path), `list`, `detach <attachment_id>` on a running runtime.
-- `runtime create --mount '<json>'` — attach bucket, link, or git mounts
+- `runtime create --mount '<json>'` — attach bucket or git mounts
   at boot (repeatable, ≤8). Mount specs are validated locally — bad paths,
-  mixed bucket/link targets, non-https endpoints or git URLs fail before
+  missing bucket targets, non-https endpoints or git URLs fail before
   the request is sent.
 - `runtime display` — computer-use pixel plane: `enable`/`disable`/`status`,
   `screenshot` (to file, `--wait-stable-ms`), `mouse` (click/move/scroll),

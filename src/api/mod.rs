@@ -350,7 +350,7 @@ impl ApiClient {
         network_policy::NetworkPolicyApi::new(self)
     }
 
-    /// Storage mounts: buckets, bucket links, runtime mounts.
+    /// Storage mounts: buckets and runtime mounts.
     pub fn storage(&self) -> storage::StorageApi<'_> {
         storage::StorageApi::new(self)
     }

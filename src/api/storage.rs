@@ -1,8 +1,8 @@
 // src/api/storage.rs — Storage mounts API.
 //
-// Buckets and links at /v1/agents/buckets and /v1/agents/bucket-links;
-// runtime mounts at /v1/agents/runtime/<id>/mounts. Credentials are
-// secret-provider references — secret material never crosses this client.
+// Buckets live at /v1/agents/buckets; runtime mounts at
+// /v1/agents/runtime/<id>/mounts. Credentials are secret-provider references —
+// secret material never crosses this client.
 
 use super::{error::ApiError, types::*, ApiClient};
 
@@ -15,7 +15,7 @@ impl<'a> StorageApi<'a> {
         Self { client }
     }
 
-    // ── managed buckets ────────────────────────────────────────────────────
+    // ── buckets ────────────────────────────────────────────────────────────
 
     /// `POST /v1/agents/buckets`
     pub async fn create_bucket(
@@ -59,75 +59,24 @@ impl<'a> StorageApi<'a> {
         Ok(env.bucket)
     }
 
+    /// `POST /v1/agents/buckets/<id>/verify`
+    pub async fn verify_bucket(&self, id_or_name: &str) -> Result<StorageBucket, ApiError> {
+        let url = self
+            .client
+            .agents_url(&format!("buckets/{id_or_name}/verify"));
+        let env = self
+            .client
+            .execute::<BucketEnvelope>("storage.bucket.verify", || self.client.post(url.clone()))
+            .await?;
+        Ok(env.bucket)
+    }
+
     /// `DELETE /v1/agents/buckets/<id>`
     pub async fn delete_bucket(&self, id_or_name: &str) -> Result<bool, ApiError> {
         let url = self.client.agents_url(&format!("buckets/{id_or_name}"));
         let body: serde_json::Value = self
             .client
             .execute("storage.bucket.delete", || self.client.delete(url.clone()))
-            .await?;
-        Ok(body
-            .get("deleted")
-            .and_then(|v| v.as_bool())
-            .unwrap_or(true))
-    }
-
-    // ── bucket links ───────────────────────────────────────────────────────
-
-    /// `POST /v1/agents/bucket-links`
-    pub async fn create_link(&self, req: &CreateBucketLinkRequest) -> Result<BucketLink, ApiError> {
-        let url = self.client.agents_url("bucket-links");
-        let env = self
-            .client
-            .execute::<LinkEnvelope>("storage.link.create", || {
-                self.client.post(url.clone()).json(req)
-            })
-            .await?;
-        Ok(env.link)
-    }
-
-    /// `GET /v1/agents/bucket-links`
-    pub async fn list_links(&self, project_id: Option<&str>) -> Result<LinkListEnvelope, ApiError> {
-        let url = self.client.agents_url("bucket-links");
-        self.client
-            .execute("storage.link.list", || {
-                let mut b = self.client.get(url.clone());
-                if let Some(pid) = project_id {
-                    b = b.query(&[("project_id", pid)]);
-                }
-                b
-            })
-            .await
-    }
-
-    /// `GET /v1/agents/bucket-links/<id>`
-    pub async fn get_link(&self, id_or_name: &str) -> Result<BucketLink, ApiError> {
-        let url = self
-            .client
-            .agents_url(&format!("bucket-links/{id_or_name}"));
-        let env = self
-            .client
-            .execute::<LinkEnvelope>("storage.link.get", || self.client.get(url.clone()))
-            .await?;
-        Ok(env.link)
-    }
-
-    /// `POST /v1/agents/bucket-links/<id>/verify`
-    pub async fn verify_link(&self, id: &str) -> Result<BucketLink, ApiError> {
-        let url = self.client.agents_url(&format!("bucket-links/{id}/verify"));
-        let env = self
-            .client
-            .execute::<LinkEnvelope>("storage.link.verify", || self.client.post(url.clone()))
-            .await?;
-        Ok(env.link)
-    }
-
-    /// `DELETE /v1/agents/bucket-links/<id>`
-    pub async fn delete_link(&self, id: &str) -> Result<bool, ApiError> {
-        let url = self.client.agents_url(&format!("bucket-links/{id}"));
-        let body: serde_json::Value = self
-            .client
-            .execute("storage.link.delete", || self.client.delete(url.clone()))
             .await?;
         Ok(body
             .get("deleted")
