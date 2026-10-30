@@ -2569,6 +2569,7 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                     &a.browser,
                     a.url.as_deref().unwrap_or(""),
                     !a.no_activate,
+                    a.context.as_deref().unwrap_or(""),
                 )
                 .await?;
             output::print_or_json(ctx.output, &r, || {
@@ -2576,6 +2577,141 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                     println!("{}\t{}\t{}", t.target_id, t.r#type, t.title);
                 }
             });
+        }
+        RuntimeBrowserCommand::Events(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let resp = ctx
+                .api
+                .runtime_browser()
+                .events(&a.id, &a.browser, a.since, a.wait_ms)
+                .await?;
+            consume_event_stream(resp).await?;
+        }
+        RuntimeBrowserCommand::Contexts(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .contexts(&a.id, &a.browser)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::ContextCreate(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let state = a
+                .storage_state
+                .as_deref()
+                .map(serde_json::from_str)
+                .transpose()
+                .context("--storage-state must be a JSON object")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .context_create(
+                    &a.id,
+                    &a.browser,
+                    a.proxy.as_deref().unwrap_or(""),
+                    state.as_ref(),
+                )
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::ContextDelete(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .context_delete(&a.id, &a.browser, &a.context_id)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::StorageExport(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .storage_export(&a.id, &a.browser, a.context.as_deref().unwrap_or(""))
+                .await?;
+            if let Some(path) = &a.out {
+                let body = r.get("storage_state").unwrap_or(&r);
+                std::fs::write(path, serde_json::to_vec_pretty(body)?)
+                    .with_context(|| format!("write {path}"))?;
+                output::success(ctx.output, format!("wrote {path}"));
+            } else {
+                output::print_or_json(ctx.output, &r, || {
+                    println!("{r:#}");
+                });
+            }
+        }
+        RuntimeBrowserCommand::StorageImport(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let state: serde_json::Value = match (&a.state, &a.state_file) {
+                (Some(inline), None) => serde_json::from_str(inline)
+                    .with_context(|| "--state must be a JSON object or string".to_string())?,
+                (None, Some(path)) => {
+                    let raw =
+                        std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+                    serde_json::from_str(&raw)
+                        .with_context(|| format!("{path} must contain a JSON object or string"))?
+                }
+                (None, None) => {
+                    anyhow::bail!("pass --state '<json>' or --state-file <path>")
+                }
+                (Some(_), Some(_)) => unreachable!("clap conflicts_with"),
+            };
+            let r = ctx
+                .api
+                .runtime_browser()
+                .storage_import(&a.id, &a.browser, state, a.context.as_deref().unwrap_or(""))
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+    }
+    Ok(())
+}
+
+/// One SSE page of browser events — prints each `{seq, kind, data}` frame as
+/// it lands; the server closes the page after `wait_ms` or one keep-alive.
+async fn consume_event_stream(response: reqwest::Response) -> anyhow::Result<()> {
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+
+    while let Some(chunk) = next_sse_chunk(&mut stream).await? {
+        let chunk = chunk.map_err(|e| anyhow::anyhow!("browser event stream: {e}"))?;
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+
+        while let Some(separator_index) = buffer.find("\n\n") {
+            let event = buffer[..separator_index].to_string();
+            buffer.drain(..separator_index + 2);
+
+            for line in event.lines() {
+                let Some(data) = line.strip_prefix("data:") else {
+                    continue;
+                };
+                let payload: serde_json::Value = serde_json::from_str(data.trim())
+                    .with_context(|| "event frame was not JSON".to_string())?;
+                match payload.get("kind").and_then(|k| k.as_str()) {
+                    Some("error") => {
+                        let message = payload
+                            .get("data")
+                            .and_then(|d| d.get("message"))
+                            .and_then(|m| m.as_str())
+                            .or_else(|| payload.get("data").and_then(|d| d.as_str()))
+                            .unwrap_or("browser event stream failed");
+                        anyhow::bail!(message.to_string());
+                    }
+                    Some("keepalive") | Some("keep-alive") => {}
+                    _ => println!("{}", serde_json::to_string(&payload)?),
+                }
+            }
         }
     }
     Ok(())
@@ -3055,6 +3191,195 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
                 if !r.cursor.is_empty() {
                     eprintln!("(more — resume with --cursor {})", r.cursor);
                 }
+            });
+        }
+        RuntimeDesktopCommand::A11ySnapshot(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if let Some(scope) = &a.scope {
+                body["scope"] = scope.clone().into();
+            }
+            if let Some(app) = &a.app {
+                body["app"] = app.clone().into();
+            }
+            if let Some(pid) = a.pid {
+                body["pid"] = pid.into();
+            }
+            if let Some(max_depth) = a.max_depth {
+                body["max_depth"] = max_depth.into();
+            }
+            if let Some(limit) = a.limit {
+                body["limit"] = limit.into();
+            }
+            if a.all {
+                body["visible_only"] = false.into();
+            }
+            if !a.roles.is_empty() {
+                body["roles"] = a.roles.clone().into();
+            }
+            if let Some(name) = &a.name {
+                body["name"] = name.clone().into();
+            }
+            if a.diff {
+                body["diff"] = true.into();
+                if a.rev != 0 {
+                    body["rev"] = a.rev.into();
+                }
+            }
+            let r = ctx.api.runtime_desktop().a11y_snapshot(&a.id, body).await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeDesktopCommand::A11yFind(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if let Some(role) = &a.role {
+                body["role"] = role.clone().into();
+            }
+            if let Some(name) = &a.name {
+                body["name"] = name.clone().into();
+            }
+            if let Some(r#ref) = &a.r#ref {
+                body["ref"] = r#ref.clone().into();
+            }
+            if let Some(max) = a.max {
+                body["max"] = max.into();
+            }
+            let r = ctx.api.runtime_desktop().a11y_find(&a.id, body).await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeDesktopCommand::A11yAction(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({"op": a.op, "ref": a.r#ref});
+            if let Some(action) = &a.action {
+                body["action"] = action.clone().into();
+            }
+            if let Some(action_index) = a.action_index {
+                body["action_index"] = action_index.into();
+            }
+            if let Some(text) = &a.text {
+                body["text"] = text.clone().into();
+            }
+            if let Some(value) = a.value {
+                body["value"] = value.into();
+            }
+            if let Some(timeout_ms) = a.timeout_ms {
+                body["timeout_ms"] = timeout_ms.into();
+            }
+            let r = ctx.api.runtime_desktop().a11y_action(&a.id, body).await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeDesktopCommand::Recordings(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx.api.runtime_desktop().recordings(&a.id).await?;
+            output::print_or_json(ctx.output, &r, || {
+                if let Some(list) = r.get("recordings").and_then(|v| v.as_array()) {
+                    for rec in list {
+                        println!(
+                            "{}\t{}\t{}",
+                            rec.get("rec_id").and_then(|v| v.as_str()).unwrap_or(""),
+                            rec.get("status").and_then(|v| v.as_str()).unwrap_or(""),
+                            rec.get("label").and_then(|v| v.as_str()).unwrap_or(""),
+                        );
+                    }
+                }
+            });
+        }
+        RuntimeDesktopCommand::Recording(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_desktop()
+                .recording(&a.id, &a.rec_id)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeDesktopCommand::RecordStart(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if !a.include.is_empty() {
+                body["include"] = a.include.clone().into();
+            }
+            if let Some(label) = &a.label {
+                body["label"] = label.clone().into();
+            }
+            if let Some(window_id) = a.window_id {
+                body["window_id"] = window_id.into();
+            }
+            let r = ctx
+                .api
+                .runtime_desktop()
+                .recording_start(&a.id, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{}", r.get("rec_id").and_then(|v| v.as_str()).unwrap_or(""));
+            });
+        }
+        RuntimeDesktopCommand::RecordStop(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_desktop()
+                .recording_stop(&a.id, &a.rec_id)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeDesktopCommand::RecordMark(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_desktop()
+                .recording_mark(&a.id, &a.rec_id, &a.label)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeDesktopCommand::RecordDelete(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_desktop()
+                .recording_delete(&a.id, &a.rec_id)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeDesktopCommand::RecordDownload(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            ctx.api
+                .runtime_desktop()
+                .recording_download(&a.id, &a.rec_id, &a.artifact, &a.local)
+                .await?;
+            output::success(
+                ctx.output,
+                format!("Downloaded {} → {}", a.artifact, a.local.display()),
+            );
+        }
+        RuntimeDesktopCommand::ViewControl(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            anyhow::ensure!(
+                matches!(a.mode.as_str(), "shared" | "human" | "agent"),
+                "mode must be shared|human|agent, got {:?}",
+                a.mode
+            );
+            let r = ctx
+                .api
+                .runtime_desktop()
+                .view_control(&a.id, &a.mode)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
             });
         }
     }

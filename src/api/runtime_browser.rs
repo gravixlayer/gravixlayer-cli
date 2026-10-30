@@ -1,5 +1,9 @@
 //! Runtime browser + display — computer-use planes.
 
+use std::path::Path;
+
+use anyhow::Context;
+use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -704,18 +708,24 @@ impl<'a> RuntimeBrowserApi<'a> {
 
     /// `POST .../browser/<bid>/targets` — empty `url` lists the tabs; a
     /// non-empty `url` opens a new tab (`activate` brings it to front).
+    /// `context_id` opens the tab inside an isolated context.
     pub async fn targets(
         &self,
         runtime_id: &str,
         browser_id: &str,
         url: &str,
         activate: bool,
+        context_id: &str,
     ) -> Result<TargetsResponse, ApiError> {
         self.client
             .execute("runtime.browser.targets", || {
+                let mut body = json!({ "url": url, "activate": activate });
+                if !context_id.is_empty() {
+                    body["context_id"] = context_id.into();
+                }
                 self.client
                     .post(self.url(runtime_id, &format!("/{}/targets", seg(browser_id))))
-                    .json(&json!({ "url": url, "activate": activate }))
+                    .json(&body)
             })
             .await
     }
@@ -743,6 +753,143 @@ impl<'a> RuntimeBrowserApi<'a> {
                 }
                 self.client
                     .post(self.url(runtime_id, &format!("/{}/view", seg(browser_id))))
+                    .json(&body)
+            })
+            .await
+    }
+
+    /// `GET .../browser/{bid}/events` — SSE event page. `since` resumes
+    /// strictly after that sequence (`Last-Event-ID` + `?since=`); `wait_ms`
+    /// bounds the page (server default 25 s, cap 30 s). Caller consumes the
+    /// stream and re-pages with the last yielded `seq`. Unbounded transport.
+    pub async fn events(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        since: u64,
+        wait_ms: u64,
+    ) -> Result<reqwest::Response, ApiError> {
+        let url = self.url(runtime_id, &format!("/{}/events", seg(browser_id)));
+        let mut request = self
+            .client
+            .stream_client()
+            .get(url)
+            .bearer_auth(self.client.api_key().expose_secret())
+            .header(reqwest::header::ACCEPT, "text/event-stream");
+        if since != 0 {
+            request = request
+                .query(&[("since", since)])
+                .header("Last-Event-ID", since.to_string());
+        }
+        if wait_ms != 0 {
+            request = request.query(&[("wait_ms", wait_ms)]);
+        }
+        let resp = tokio::time::timeout(super::REQUEST_TIMEOUT, request.send())
+            .await
+            .map_err(|_| ApiError::Timeout)?
+            .map_err(ApiError::Connection)?;
+        if resp.status().is_success() {
+            Ok(resp)
+        } else {
+            Err(ApiError::from_http(resp).await)
+        }
+    }
+
+    /// `POST .../browser/{bid}/context` — isolated context → `{context_id}`.
+    /// `proxy` is a proxy server URL; `storage_state` seeds the jars in the
+    /// Playwright-compatible export shape.
+    pub async fn context_create(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        proxy: &str,
+        storage_state: Option<&Value>,
+    ) -> Result<Value, ApiError> {
+        let mut body = json!({});
+        if !proxy.is_empty() {
+            body["proxy"] = proxy.into();
+        }
+        if let Some(state) = storage_state {
+            body["storage_state"] = state.clone();
+        }
+        self.client
+            .execute("runtime.browser.context.create", || {
+                self.client
+                    .post(self.url(runtime_id, &format!("/{}/context", seg(browser_id))))
+                    .json(&body)
+            })
+            .await
+    }
+
+    /// `GET .../browser/{bid}/contexts` — caller-created contexts; the
+    /// implicit default context does not list.
+    pub async fn contexts(&self, runtime_id: &str, browser_id: &str) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.browser.contexts", || {
+                self.client
+                    .get(self.url(runtime_id, &format!("/{}/contexts", seg(browser_id))))
+            })
+            .await
+    }
+
+    /// `DELETE .../browser/{bid}/context/{cid}` — removes the context and its
+    /// jars. The default context rejects guest-side.
+    pub async fn context_delete(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        context_id: &str,
+    ) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.browser.context.delete", || {
+                self.client.delete(self.url(
+                    runtime_id,
+                    &format!("/{}/context/{}", seg(browser_id), seg(context_id)),
+                ))
+            })
+            .await
+    }
+
+    /// `POST .../browser/{bid}/storage/export` — cookies + local storage →
+    /// `{storage_state}`. Empty `context_id` addresses the default context.
+    pub async fn storage_export(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        context_id: &str,
+    ) -> Result<Value, ApiError> {
+        let body = if context_id.is_empty() {
+            json!({})
+        } else {
+            json!({"context_id": context_id})
+        };
+        self.client
+            .execute("runtime.browser.storage.export", || {
+                self.client
+                    .post(self.url(runtime_id, &format!("/{}/storage/export", seg(browser_id))))
+                    .json(&body)
+            })
+            .await
+    }
+
+    /// `POST .../browser/{bid}/storage/import` — loads cookies/origins into a
+    /// context. `storage_state` is the exported object or a pre-serialized
+    /// JSON string.
+    pub async fn storage_import(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        storage_state: Value,
+        context_id: &str,
+    ) -> Result<Value, ApiError> {
+        let mut body = json!({"storage_state": storage_state});
+        if !context_id.is_empty() {
+            body["context_id"] = context_id.into();
+        }
+        self.client
+            .execute("runtime.browser.storage.import", || {
+                self.client
+                    .post(self.url(runtime_id, &format!("/{}/storage/import", seg(browser_id))))
                     .json(&body)
             })
             .await
@@ -1046,6 +1193,166 @@ impl<'a> RuntimeDesktopApi<'a> {
             .await
     }
 
+    /// `POST .../display/a11y/snapshot` — flat accessibility digest.
+    /// `body` carries `scope`/`app`/`pid`/`max_depth`/`limit`/`visible_only`/
+    /// `roles`/`name`/`diff`/`rev`.
+    pub async fn a11y_snapshot(&self, runtime_id: &str, body: Value) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.a11y.snapshot", || {
+                self.client
+                    .post(self.url(runtime_id, "/a11y/snapshot"))
+                    .json(&body)
+            })
+            .await
+    }
+
+    /// `POST .../display/a11y/find` — search the tree by `role`/`name`,
+    /// optionally below `ref`, capped by `max`.
+    pub async fn a11y_find(&self, runtime_id: &str, body: Value) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.a11y.find", || {
+                self.client
+                    .post(self.url(runtime_id, "/a11y/find"))
+                    .json(&body)
+            })
+            .await
+    }
+
+    /// `POST .../display/a11y/action` — ref-addressed action:
+    /// `op`/`ref`/`action`/`action_index`/`text`/`value`/`timeout_ms`.
+    pub async fn a11y_action(&self, runtime_id: &str, body: Value) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.a11y.action", || {
+                self.client
+                    .post(self.url(runtime_id, "/a11y/action"))
+                    .json(&body)
+            })
+            .await
+    }
+
+    /// `POST .../display/recordings` — start a recording. `body` carries
+    /// `include` (`video`/`input`/`window`/`app`), `label`, `window_id`.
+    pub async fn recording_start(&self, runtime_id: &str, body: Value) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.recording.start", || {
+                self.client
+                    .post(self.url(runtime_id, "/recordings"))
+                    .json(&body)
+            })
+            .await
+    }
+
+    /// `GET .../display/recordings` — active first, then completed newest-first.
+    pub async fn recordings(&self, runtime_id: &str) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.recordings", || {
+                self.client.get(self.url(runtime_id, "/recordings"))
+            })
+            .await
+    }
+
+    /// `GET .../display/recordings/{rec}` — one recording's metadata with
+    /// live progress merged in.
+    pub async fn recording(&self, runtime_id: &str, rec_id: &str) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.recording", || {
+                self.client
+                    .get(self.url(runtime_id, &format!("/recordings/{}", seg(rec_id))))
+            })
+            .await
+    }
+
+    /// `POST .../display/recordings/{rec}/stop` — finalizes the MP4 and seals
+    /// the trajectory.
+    pub async fn recording_stop(&self, runtime_id: &str, rec_id: &str) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.recording.stop", || {
+                self.client
+                    .post(self.url(runtime_id, &format!("/recordings/{}/stop", seg(rec_id))))
+            })
+            .await
+    }
+
+    /// `POST .../display/recordings/{rec}/mark` — stamps a named mark into
+    /// the recording's metadata + trajectory.
+    pub async fn recording_mark(
+        &self,
+        runtime_id: &str,
+        rec_id: &str,
+        label: &str,
+    ) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.recording.mark", || {
+                self.client
+                    .post(self.url(runtime_id, &format!("/recordings/{}/mark", seg(rec_id))))
+                    .json(&json!({"label": label}))
+            })
+            .await
+    }
+
+    /// `DELETE .../display/recordings/{rec}` — removes the recording's
+    /// artifacts (rejects while recording).
+    pub async fn recording_delete(
+        &self,
+        runtime_id: &str,
+        rec_id: &str,
+    ) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.recording.delete", || {
+                self.client
+                    .delete(self.url(runtime_id, &format!("/recordings/{}", seg(rec_id))))
+            })
+            .await
+    }
+
+    /// `POST .../display/view/control` — takeover mode
+    /// `shared` | `human` | `agent`. Under `human` the pixel plane keeps
+    /// answering reads but rejects agent input until the mode returns.
+    pub async fn view_control(&self, runtime_id: &str, mode: &str) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.display.view.control", || {
+                self.client
+                    .post(self.url(runtime_id, "/view/control"))
+                    .json(&json!({"mode": mode}))
+            })
+            .await
+    }
+
+    /// `GET .../display/recordings/{rec}/{artifact}` — streams the artifact
+    /// (`video` | `trajectory`) to `local_path`, creating parent dirs.
+    pub async fn recording_download(
+        &self,
+        runtime_id: &str,
+        rec_id: &str,
+        artifact: &str,
+        local_path: &Path,
+    ) -> anyhow::Result<()> {
+        let url = self.url(
+            runtime_id,
+            &format!("/recordings/{}/{artifact}", seg(rec_id)),
+        );
+        let resp = self
+            .client
+            .http_client()
+            .get(url)
+            .bearer_auth(self.client.api_key_str())
+            .send()
+            .await
+            .context("recording artifact download request")?;
+        let bytes = ApiClient::check_status(resp)
+            .await?
+            .bytes()
+            .await
+            .context("read recording artifact body")?;
+        if let Some(parent) = local_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        tokio::fs::write(local_path, &bytes)
+            .await
+            .with_context(|| format!("write {}", local_path.display()))?;
+        Ok(())
+    }
+
     /// `GET .../desktop/status` — declared components and live states.
     pub async fn desktop_status(
         &self,
@@ -1199,7 +1506,7 @@ mod tests {
             .await;
         let r = client(&server)
             .runtime_browser()
-            .targets(RT, "b1", "", true)
+            .targets(RT, "b1", "", true, "")
             .await
             .unwrap();
         listed.assert_async().await;
@@ -1513,7 +1820,7 @@ mod tests {
             .await;
         let r = client(&server)
             .runtime_browser()
-            .targets(RT, "b1", "https://new.example/", true)
+            .targets(RT, "b1", "https://new.example/", true, "")
             .await
             .unwrap();
         m.assert_async().await;
@@ -1655,6 +1962,374 @@ mod tests {
             )
             .await
             .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn a11y_snapshot_posts_scope_filters_and_diff() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("display/a11y/snapshot"))
+                    .json_body(json!({
+                        "scope": "app", "app": "gimp", "limit": 40,
+                        "diff": true, "rev": 3,
+                    }));
+                then.status(200)
+                    .json_body(json!({"rev": "4", "elements": [], "truncated": false}));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_desktop()
+            .a11y_snapshot(
+                RT,
+                json!({"scope": "app", "app": "gimp", "limit": 40, "diff": true, "rev": 3}),
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r["rev"], "4");
+    }
+
+    #[tokio::test]
+    async fn a11y_find_posts_role_name_and_ref() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST).path(path("display/a11y/find")).json_body(
+                    json!({"role": "push button", "name": "save", "ref": "d7", "max": 5}),
+                );
+                then.status(200)
+                    .json_body(json!({"rev": "2", "elements": [{"ref": "d9"}]}));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_desktop()
+            .a11y_find(
+                RT,
+                json!({"role": "push button", "name": "save", "ref": "d7", "max": 5}),
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r["elements"][0]["ref"], "d9");
+    }
+
+    #[tokio::test]
+    async fn a11y_action_posts_op_ref_and_text() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("display/a11y/action"))
+                    .json_body(
+                        json!({"op": "type", "ref": "d3", "text": "hello", "timeout_ms": 2000}),
+                    );
+                then.status(200)
+                    .json_body(json!({"ok": true, "settled": true, "rev": "5"}));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_desktop()
+            .a11y_action(
+                RT,
+                json!({"op": "type", "ref": "d3", "text": "hello", "timeout_ms": 2000}),
+            )
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn recordings_lists_and_recording_gets_one() {
+        let server = MockServer::start_async().await;
+        let list = server
+            .mock_async(|when, then| {
+                when.method(GET).path(path("display/recordings"));
+                then.status(200).json_body(json!({
+                    "recordings": [{"rec_id": "r1", "status": "recording", "label": "run"}]
+                }));
+            })
+            .await;
+        let get = server
+            .mock_async(|when, then| {
+                when.method(GET).path(path("display/recordings/r1"));
+                then.status(200)
+                    .json_body(json!({"rec_id": "r1", "status": "recording", "frames": 12}));
+            })
+            .await;
+        let api = client(&server);
+        let list_r = api.runtime_desktop().recordings(RT).await.unwrap();
+        let get_r = api.runtime_desktop().recording(RT, "r1").await.unwrap();
+        list.assert_async().await;
+        get.assert_async().await;
+        assert_eq!(list_r["recordings"][0]["rec_id"], "r1");
+        assert_eq!(get_r["frames"], 12);
+    }
+
+    #[tokio::test]
+    async fn recording_lifecycle_posts_to_the_right_subroutes() {
+        let server = MockServer::start_async().await;
+        let start = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("display/recordings"))
+                    .json_body(
+                        json!({"include": ["video", "input"], "label": "ep", "window_id": 7}),
+                    );
+                then.status(201)
+                    .json_body(json!({"rec_id": "r9", "status": "recording"}));
+            })
+            .await;
+        let mark = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("display/recordings/r9/mark"))
+                    .json_body(json!({"label": "clicked"}));
+                then.status(200).json_body(json!({"ok": true}));
+            })
+            .await;
+        let stop = server
+            .mock_async(|when, then| {
+                when.method(POST).path(path("display/recordings/r9/stop"));
+                then.status(200).json_body(json!({"status": "stopped"}));
+            })
+            .await;
+        let delete = server
+            .mock_async(|when, then| {
+                when.method(DELETE).path(path("display/recordings/r9"));
+                then.status(200).json_body(json!({"deleted": true}));
+            })
+            .await;
+        let api = client(&server);
+        let started = api
+            .runtime_desktop()
+            .recording_start(
+                RT,
+                json!({"include": ["video", "input"], "label": "ep", "window_id": 7}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(started["rec_id"], "r9");
+        api.runtime_desktop()
+            .recording_mark(RT, "r9", "clicked")
+            .await
+            .unwrap();
+        api.runtime_desktop()
+            .recording_stop(RT, "r9")
+            .await
+            .unwrap();
+        api.runtime_desktop()
+            .recording_delete(RT, "r9")
+            .await
+            .unwrap();
+        for m in [start, mark, stop, delete] {
+            m.assert_async().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn recording_ids_are_path_encoded() {
+        // A hostile or malformed id must never escape the recordings path.
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(DELETE).path(path("display/recordings/a%2Fb"));
+                then.status(200).json_body(json!({"deleted": true}));
+            })
+            .await;
+        client(&server)
+            .runtime_desktop()
+            .recording_delete(RT, "a/b")
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn view_control_posts_the_mode() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("display/view/control"))
+                    .json_body(json!({"mode": "human"}));
+                then.status(200).json_body(json!({"mode": "human"}));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_desktop()
+            .view_control(RT, "human")
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r["mode"], "human");
+    }
+
+    #[tokio::test]
+    async fn context_lifecycle_hits_context_subroutes() {
+        let server = MockServer::start_async().await;
+        let create = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/context"))
+                    .json_body(json!({"proxy": "http://p:3128", "storage_state": {"cookies": []}}));
+                then.status(201).json_body(json!({"context_id": "c2"}));
+            })
+            .await;
+        let list = server
+            .mock_async(|when, then| {
+                when.method(GET).path(path("browser/b1/contexts"));
+                then.status(200)
+                    .json_body(json!({"contexts": [{"context_id": "c2"}]}));
+            })
+            .await;
+        let delete = server
+            .mock_async(|when, then| {
+                when.method(DELETE).path(path("browser/b1/context/c2"));
+                then.status(200).json_body(json!({"deleted": true}));
+            })
+            .await;
+        let api = client(&server);
+        let created = api
+            .runtime_browser()
+            .context_create(RT, "b1", "http://p:3128", Some(&json!({"cookies": []})))
+            .await
+            .unwrap();
+        assert_eq!(created["context_id"], "c2");
+        api.runtime_browser().contexts(RT, "b1").await.unwrap();
+        api.runtime_browser()
+            .context_delete(RT, "b1", "c2")
+            .await
+            .unwrap();
+        for m in [create, list, delete] {
+            m.assert_async().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn context_create_omits_empty_fields() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/context"))
+                    .json_body(json!({}));
+                then.status(201).json_body(json!({"context_id": "c3"}));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .context_create(RT, "b1", "", None)
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn storage_export_import_round_trip() {
+        let server = MockServer::start_async().await;
+        let export = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/storage/export"))
+                    .json_body(json!({"context_id": "c2"}));
+                then.status(200).json_body(json!({
+                    "storage_state": {"cookies": [{"name": "s"}], "origins": []}
+                }));
+            })
+            .await;
+        let import = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/storage/import"))
+                    .json_body(json!({
+                        "storage_state": {"cookies": [{"name": "s"}], "origins": []},
+                        "context_id": "c3",
+                    }));
+                then.status(200).json_body(json!({"ok": true}));
+            })
+            .await;
+        let api = client(&server);
+        let exported = api
+            .runtime_browser()
+            .storage_export(RT, "b1", "c2")
+            .await
+            .unwrap();
+        api.runtime_browser()
+            .storage_import(RT, "b1", exported["storage_state"].clone(), "c3")
+            .await
+            .unwrap();
+        export.assert_async().await;
+        import.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn storage_export_omits_empty_context_id() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/storage/export"))
+                    .json_body(json!({}));
+                then.status(200)
+                    .json_body(json!({"storage_state": {"cookies": [], "origins": []}}));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .storage_export(RT, "b1", "")
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn targets_sends_context_id_only_when_set() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b1/targets"))
+                    .json_body(json!({
+                        "url": "https://x.example/", "activate": true, "context_id": "c2",
+                    }));
+                then.status(200)
+                    .json_body(json!({"targets": [], "target_id": "T9"}));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .targets(RT, "b1", "https://x.example/", true, "c2")
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn events_resume_sends_since_and_last_event_id() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path(path("browser/b1/events"))
+                    .query_param("since", "41")
+                    .query_param("wait_ms", "10000")
+                    .header("Last-Event-ID", "41")
+                    .header("Accept", "text/event-stream");
+                then.status(200)
+                    .header("Content-Type", "text/event-stream")
+                    .body("data: {\"seq\":42,\"kind\":\"nav\",\"data\":{}}\n\n");
+            })
+            .await;
+        let resp = client(&server)
+            .runtime_browser()
+            .events(RT, "b1", 41, 10_000)
+            .await
+            .unwrap();
+        assert!(resp.status().is_success());
         m.assert_async().await;
     }
 }

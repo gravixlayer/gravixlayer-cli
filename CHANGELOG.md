@@ -10,6 +10,29 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 
+## [0.1.16] - 2026-10-30
+
+### Added
+
+- **Desktop accessibility commands.** `runtime desktop a11y-snapshot`
+  (`--scope`, `--app`, `--pid`, `--max-depth`, `--limit`, `--all`, `--role`,
+  `--name`, `--diff`, `--rev`), `a11y-find` (`--role`, `--name`, `--ref`,
+  `--max`), and `a11y-action` (`<op> --ref` with `--action`, `--action-index`,
+  `--text`, `--value`, `--timeout-ms`) expose the ref-addressed accessibility
+  surface both SDKs already carry.
+- **Desktop recording commands.** `runtime desktop recordings`,
+  `recording <id>`, `record-start` (`--include`, `--label`, `--window-id`),
+  `record-stop`, `record-mark`, `record-delete`, and `record-download`
+  (`--artifact video|trajectory <local>`) cover the full recording lifecycle;
+  `view-control <shared|human|agent>` sets the live-view takeover mode.
+- **Browser context and storage commands.** `runtime browser contexts`,
+  `context-create` (`--proxy`, `--storage-state`), `context-delete <id>`,
+  `storage-export` (`--context`, `--out`), and `storage-import` (`--state` or
+  `--state-file`) manage isolated browser contexts and their cookie/storage
+  jars; `browser events` streams one SSE event page (`--since` resumes,
+  `--wait-ms` bounds the page); `browser targets --context <id>` opens a new
+  tab inside an isolated context.
+
 ## [0.1.15] - 2026-10-27
 
 ### Changed

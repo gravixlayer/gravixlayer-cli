@@ -334,6 +334,18 @@ pub enum RuntimeBrowserCommand {
     Dialog(RuntimeBrowserDialogArgs),
     /// List a browser's targets (tabs)
     Targets(RuntimeBrowserTargetsArgs),
+    /// Stream browser events (one SSE page; re-page with --since)
+    Events(RuntimeBrowserEventsArgs),
+    /// List caller-created isolated contexts
+    Contexts(RuntimeBrowserIdArgs),
+    /// Create an isolated browser context
+    ContextCreate(RuntimeBrowserContextCreateArgs),
+    /// Delete an isolated browser context and its jars
+    ContextDelete(RuntimeBrowserContextIdArgs),
+    /// Export a context's cookies/local storage
+    StorageExport(RuntimeBrowserStorageExportArgs),
+    /// Import cookies/origins into a context
+    StorageImport(RuntimeBrowserStorageImportArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -388,6 +400,28 @@ pub enum RuntimeDesktopCommand {
     Restart(RuntimeDesktopComponentArgs),
     /// Journal logs for a component
     Logs(RuntimeDesktopLogsArgs),
+    /// Flat accessibility digest of the desktop tree
+    A11ySnapshot(RuntimeDesktopA11ySnapshotArgs),
+    /// Search the accessibility tree by role/name
+    A11yFind(RuntimeDesktopA11yFindArgs),
+    /// Ref-addressed accessibility action
+    A11yAction(RuntimeDesktopA11yActionArgs),
+    /// List recordings (active first, then completed)
+    Recordings(RuntimeDesktopIdArgs),
+    /// One recording's metadata
+    Recording(RuntimeDesktopRecordingArgs),
+    /// Start a display recording
+    RecordStart(RuntimeDesktopRecordStartArgs),
+    /// Finalize a recording's MP4 and seal its trajectory
+    RecordStop(RuntimeDesktopRecordingArgs),
+    /// Stamp a named mark into the recording
+    RecordMark(RuntimeDesktopRecordMarkArgs),
+    /// Delete a recording's artifacts
+    RecordDelete(RuntimeDesktopRecordingArgs),
+    /// Download a recording's video or trajectory artifact
+    RecordDownload(RuntimeDesktopRecordDownloadArgs),
+    /// Live-view takeover mode (shared|human|agent)
+    ViewControl(RuntimeDesktopViewControlArgs),
 }
 
 // ── browser arg structs ─────────────────────────────────────────────────────
@@ -701,6 +735,9 @@ pub struct RuntimeBrowserTargetsArgs {
     /// Don't bring the new tab to the front
     #[arg(long)]
     pub no_activate: bool,
+    /// Open the new tab inside an isolated context
+    #[arg(long)]
+    pub context: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1026,6 +1063,215 @@ pub struct RuntimeDesktopLogsArgs {
     /// Priority filter (e.g. err)
     #[arg(long)]
     pub priority: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserEventsArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Resume strictly after this event sequence number
+    #[arg(long, default_value_t = 0)]
+    pub since: u64,
+    /// Bound the long-poll page (ms; server default 25000, cap 30000)
+    #[arg(long, default_value_t = 0)]
+    pub wait_ms: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserContextCreateArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Proxy server URL for the context
+    #[arg(long)]
+    pub proxy: Option<String>,
+    /// Storage state seed (Playwright-compatible JSON object)
+    #[arg(long)]
+    pub storage_state: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserContextIdArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Context ID
+    pub context_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserStorageExportArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Context ID — omitted exports the default context
+    #[arg(long)]
+    pub context: Option<String>,
+    /// Write the storage state to this file instead of stdout
+    #[arg(long)]
+    pub out: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserStorageImportArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Context ID — omitted imports into the default context
+    #[arg(long)]
+    pub context: Option<String>,
+    /// Storage state as inline JSON (object or pre-serialized string)
+    #[arg(long, conflicts_with = "state_file")]
+    pub state: Option<String>,
+    /// Read the storage state from this file
+    #[arg(long, conflicts_with = "state")]
+    pub state_file: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopA11ySnapshotArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Scope: "full" (default) every app, "app" one app, "focus" the focused subtree
+    #[arg(long)]
+    pub scope: Option<String>,
+    /// App name substring (scope=app)
+    #[arg(long)]
+    pub app: Option<String>,
+    /// App pid (scope=app)
+    #[arg(long)]
+    pub pid: Option<u32>,
+    /// Cap tree depth
+    #[arg(long)]
+    pub max_depth: Option<u32>,
+    /// Cap returned elements
+    #[arg(long)]
+    pub limit: Option<u32>,
+    /// Include hidden/non-visible elements (default shows only visible)
+    #[arg(long)]
+    pub all: bool,
+    /// Only these roles (repeatable)
+    #[arg(long = "role")]
+    pub roles: Vec<String>,
+    /// Name substring filter
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Only nodes changed since --rev (or the last-known tree when --rev is 0)
+    #[arg(long)]
+    pub diff: bool,
+    /// Revision for --diff
+    #[arg(long, default_value_t = 0)]
+    pub rev: u64,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopA11yFindArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Role substring
+    #[arg(long)]
+    pub role: Option<String>,
+    /// Name substring (case-insensitive)
+    #[arg(long)]
+    pub name: Option<String>,
+    /// Scope the search below this element ref (omitted = whole tree)
+    #[arg(long = "ref")]
+    pub r#ref: Option<String>,
+    /// Cap results
+    #[arg(long)]
+    pub max: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopA11yActionArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// click | focus | invoke | set_value | type
+    pub op: String,
+    /// Target element ref (e.g. d12)
+    #[arg(long = "ref")]
+    pub r#ref: String,
+    /// Named action for invoke (e.g. "press")
+    #[arg(long)]
+    pub action: Option<String>,
+    /// Action index for invoke when no name is given
+    #[arg(long)]
+    pub action_index: Option<u32>,
+    /// Text for type/set_value
+    #[arg(long)]
+    pub text: Option<String>,
+    /// Numeric value for set_value
+    #[arg(long)]
+    pub value: Option<f64>,
+    /// Settle timeout (ms)
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopRecordingArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Recording ID
+    pub rec_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopRecordStartArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Components to record — video|input|window|app (repeatable; empty = all)
+    #[arg(long = "include")]
+    pub include: Vec<String>,
+    /// Recording label
+    #[arg(long)]
+    pub label: Option<String>,
+    /// Scope capture to one window's rect
+    #[arg(long)]
+    pub window_id: Option<u32>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopRecordMarkArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Recording ID
+    pub rec_id: String,
+    /// Mark label
+    pub label: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopRecordDownloadArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Recording ID
+    pub rec_id: String,
+    /// Local destination path
+    pub local: PathBuf,
+    /// Artifact to download: video | trajectory
+    #[arg(long, default_value = "video", value_parser = ["video", "trajectory"])]
+    pub artifact: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeDesktopViewControlArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// shared | human | agent
+    #[arg(value_parser = ["shared", "human", "agent"])]
+    pub mode: String,
 }
 
 #[derive(Debug, Args)]
