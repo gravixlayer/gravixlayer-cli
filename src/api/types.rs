@@ -333,6 +333,11 @@ pub struct Template {
     pub cloud: Option<String>,
     pub region: Option<String>,
     pub is_active: Option<bool>,
+    /// Latest build id/status on the tenant's unpublished rows — present
+    /// only when `include_inactive` widens the list; lets the table mark
+    /// `failed`/`building` rows instead of hiding them.
+    pub latest_build_id: Option<String>,
+    pub latest_build_status: Option<String>,
 }
 
 impl Template {

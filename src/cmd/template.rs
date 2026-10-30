@@ -37,6 +37,7 @@ async fn list(ctx: &AppContext, args: TemplateListArgs) -> anyhow::Result<()> {
             args.offset,
             Some(kind),
             args.project_id.as_deref(),
+            !args.active_only,
         )
         .await?;
     output::print_or_json(ctx.output, &result, || {

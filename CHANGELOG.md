@@ -9,6 +9,18 @@ Pre-releases use `X.Y.Z-alpha.N` (for example `0.2.0-alpha.1`) and are published
 as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
+## [Unreleased]
+
+### Fixed
+
+- **`template list` shows templates whose builds never published.** A
+  failed build's template kept its name reserved yet never appeared in
+  `template list` — the name was taken with no visible owner to retry or
+  delete. The list now asks the API for the tenant's unpublished rows
+  (`include_inactive`) and prints a STATUS column: `ready` for
+  launchable templates, `uploading` mid-rebuild, and the latest build
+  status (`failed`, `pending`, `building`, …) for unpublished ones.
+  `--active-only` restores the launchable-only view.
 
 ## [0.1.17] - 2026-10-30
 

@@ -15,12 +15,16 @@ impl<'a> TemplateApi<'a> {
     ///
     /// Control-plane default for omitted `kind` is `sandbox` (runtime templates).
     /// Pass `kind=agent` or `kind=all` to match the Python SDK.
+    /// `include_inactive` widens the tenant's own rows to unpublished
+    /// templates — pending, building, and failed builds that still hold
+    /// their name — so `template list` can show them for retry/delete.
     pub async fn list(
         &self,
         limit: u32,
         offset: u32,
         kind: Option<&str>,
         project_id: Option<&str>,
+        include_inactive: bool,
     ) -> Result<TemplateList, ApiError> {
         let url = self.client.agents_url("template");
         let kind = kind.unwrap_or("sandbox");
@@ -31,6 +35,9 @@ impl<'a> TemplateApi<'a> {
                     ("offset", offset.to_string()),
                     ("kind", kind.to_string()),
                 ]);
+                if include_inactive {
+                    req = req.query(&[("include_inactive", "true")]);
+                }
                 if let Some(pid) = project_id {
                     req = req.query(&[("project_id", pid)]);
                 }
@@ -179,5 +186,41 @@ mod tests {
             .await
             .expect("an authorized SSE handshake must succeed");
         assert_eq!(resp.status(), 200);
+    }
+
+    #[tokio::test]
+    async fn list_sends_include_inactive_only_when_asked() {
+        // Unpublished templates hold names — the flag widens the tenant's
+        // own rows so list can show (and delete) them; omitting it must
+        // not leak the parameter.
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/v1/agents/template")
+                    .query_param("include_inactive", "true");
+                then.status(200).body(r#"{"templates": [], "total": 0}"#);
+            })
+            .await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET).path("/v1/agents/template").matches(|req| {
+                    !req.query_params
+                        .iter()
+                        .flatten()
+                        .any(|(k, _)| k == "include_inactive")
+                });
+                then.status(200).body(r#"{"templates": [], "total": 0}"#);
+            })
+            .await;
+        let api = client(&server);
+        api.template()
+            .list(10, 0, None, None, true)
+            .await
+            .expect("flag on");
+        api.template()
+            .list(10, 0, None, None, false)
+            .await
+            .expect("flag off");
     }
 }

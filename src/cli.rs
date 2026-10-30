@@ -2236,6 +2236,11 @@ pub struct TemplateListArgs {
     /// Optional project filter (UUID) — forwarded when the control plane honors it
     #[arg(long)]
     pub project_id: Option<String>,
+    /// Hide templates whose builds never published (pending, building,
+    /// or failed) — list defaults to showing them since they hold names
+    /// and accept retry/delete.
+    #[arg(long)]
+    pub active_only: bool,
 }
 
 #[derive(Debug, Args)]

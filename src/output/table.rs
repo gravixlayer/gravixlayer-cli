@@ -391,9 +391,22 @@ pub fn template_table(templates: &[Template]) -> Table {
         "MEM",
         "DISK",
         "VISIBILITY",
+        "STATUS",
         "CREATED",
     ]);
     for tmpl in templates {
+        // A launchable template is `ready` — except mid-rebuild, whose
+        // latest build still reports `uploading`. An unpublished row
+        // shows its latest build's status (failed, pending, ...) so the
+        // name-holder is visible — and deletable — not silently reserved.
+        let status = match (
+            tmpl.is_active.unwrap_or(false),
+            tmpl.latest_build_status.as_deref(),
+        ) {
+            (true, Some("uploading")) => "uploading",
+            (true, _) => "ready",
+            (false, s) => s.unwrap_or("-"),
+        };
         t.add_row(vec![
             Cell::new(tmpl.canonical_id()),
             Cell::new(opt_str(&tmpl.name)),
@@ -402,6 +415,7 @@ pub fn template_table(templates: &[Template]) -> Table {
             Cell::new(opt_u64(tmpl.memory_mb)),
             Cell::new(opt_u64(tmpl.disk_size_mb)),
             Cell::new(opt_str(&tmpl.visibility)),
+            Cell::new(status),
             Cell::new(format_relative(tmpl.created_at.as_deref())),
         ]);
     }
