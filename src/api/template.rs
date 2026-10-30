@@ -86,13 +86,18 @@ impl<'a> TemplateApi<'a> {
         let url = self.client.agents_url(&format!(
             "template/builds/{build_id}/events?after_seq={after_seq}"
         ));
-        let resp = self
-            .client
-            .get(url)
-            .header(reqwest::header::ACCEPT, "text/event-stream")
-            .send()
-            .await
-            .map_err(ApiError::Connection)?;
+        let resp = tokio::time::timeout(
+            super::REQUEST_TIMEOUT,
+            self.client
+                .stream_client()
+                .get(url)
+                .bearer_auth(self.client.api_key_str())
+                .header(reqwest::header::ACCEPT, "text/event-stream")
+                .send(),
+        )
+        .await
+        .map_err(|_| ApiError::Timeout)?
+        .map_err(ApiError::Connection)?;
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
@@ -137,5 +142,42 @@ impl<'a> TemplateApi<'a> {
             sleep(interval).await;
             interval = (interval * 2).min(Duration::from_secs(15));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use httpmock::prelude::*;
+    use secrecy::SecretString;
+
+    use super::ApiClient;
+
+    fn client(server: &MockServer) -> ApiClient {
+        ApiClient::new(SecretString::from("test-key"), Some(server.base_url())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn build_events_stream_sends_auth() {
+        // The SSE handshake must carry the bearer token — a bare request
+        // 401s with `authorization header required`.
+        let server = MockServer::start_async().await;
+        server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/v1/agents/template/builds/b1/events")
+                    .header("authorization", "Bearer test-key")
+                    .header("accept", "text/event-stream");
+                then.status(200)
+                    .header("content-type", "text/event-stream")
+                    .body("id: 1\ndata: {\"seq\":1}\n\n");
+            })
+            .await;
+        let api = client(&server);
+        let resp = api
+            .template()
+            .stream_build_events("b1", 0)
+            .await
+            .expect("an authorized SSE handshake must succeed");
+        assert_eq!(resp.status(), 200);
     }
 }

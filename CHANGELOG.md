@@ -10,6 +10,18 @@ as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
 
+## [0.1.17] - 2026-10-30
+
+### Fixed
+
+- **`runtime template events` 401.** The build-event SSE handshake went
+  out without the bearer token (a bare request builder instead of the
+  authorized streaming client), so the server rejected it with
+  `authorization header required` and the durable event log — including
+  the actual build-failure reason — was unreachable. A mock test now
+  pins the authorized handshake.
+
+
 ## [0.1.16] - 2026-10-30
 
 ### Added
