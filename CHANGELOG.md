@@ -9,9 +9,14 @@ Pre-releases use `X.Y.Z-alpha.N` (for example `0.2.0-alpha.1`) and are published
 as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
-## [Unreleased]
+## [0.1.18] - 2026-10-31
 
 ### Fixed
+
+- **`runtime desktop view --rotate-token` and `runtime browser view
+  --rotate-token` help text** described the flag as required for a fresh
+  token. Every `view` call mints one now — the flag stays accepted for
+  compatibility; the help says so on both commands.
 
 - **`template list` shows templates whose builds never published.** A
   failed build's template kept its name reserved yet never appeared in
