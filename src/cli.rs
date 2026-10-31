@@ -756,7 +756,8 @@ pub struct RuntimeBrowserViewArgs {
     /// JPEG quality 1-100
     #[arg(long)]
     pub quality: Option<u32>,
-    /// Mint a fresh auth token — invalidates the previous watch URL
+    /// Accepted for compatibility — every view now mints a fresh token
+    /// (each mint invalidates the previous link)
     #[arg(long)]
     pub rotate_token: bool,
     /// control (input allowed) | watch (view-only link)
@@ -842,7 +843,8 @@ pub struct RuntimeDesktopViewArgs {
     /// JPEG quality 1-100
     #[arg(long)]
     pub quality: Option<u32>,
-    /// Mint a fresh auth token — invalidates the previous watch URL
+    /// Accepted for compatibility — every view now mints a fresh token
+    /// (each mint invalidates the previous link)
     #[arg(long)]
     pub rotate_token: bool,
     /// control (input allowed) | watch (view-only link)
