@@ -792,6 +792,9 @@ pub struct RuntimeDesktopEnableArgs {
     /// auto (attach when the image ships a display, else spawn) | spawn | attach
     #[arg(long)]
     pub mode: Option<String>,
+    /// Display dots-per-inch (default: server default, 96)
+    #[arg(long)]
+    pub dpi: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -978,6 +981,9 @@ pub struct RuntimeDesktopResizeArgs {
     pub width: u32,
     /// New framebuffer height
     pub height: u32,
+    /// New display dots-per-inch (default: keep current)
+    #[arg(long)]
+    pub dpi: Option<u32>,
 }
 
 #[derive(Debug, Args)]
@@ -1242,6 +1248,9 @@ pub struct RuntimeDesktopRecordStartArgs {
     /// Scope capture to one window's rect
     #[arg(long)]
     pub window_id: Option<u32>,
+    /// Guest directory artifacts land in (must be absolute; default = platform recordings dir)
+    #[arg(long)]
+    pub dir: Option<String>,
 }
 
 #[derive(Debug, Args)]

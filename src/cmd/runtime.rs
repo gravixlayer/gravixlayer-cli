@@ -2730,11 +2730,14 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
                 .runtime_desktop()
                 .enable(
                     &a.id,
-                    a.width.unwrap_or(0),
-                    a.height.unwrap_or(0),
-                    &a.display,
-                    a.wm.as_deref().unwrap_or(""),
-                    a.mode.as_deref().unwrap_or(""),
+                    crate::api::runtime_browser::EnableOptions {
+                        width: a.width.unwrap_or(0),
+                        height: a.height.unwrap_or(0),
+                        display: &a.display,
+                        wm: a.wm.as_deref().unwrap_or(""),
+                        mode: a.mode.as_deref().unwrap_or(""),
+                        dpi: a.dpi.unwrap_or(0),
+                    },
                 )
                 .await?;
             output::print_or_json(ctx.output, &s, || {
@@ -3043,7 +3046,7 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
             let s = ctx
                 .api
                 .runtime_desktop()
-                .resize(&a.id, a.width, a.height)
+                .resize(&a.id, a.width, a.height, a.dpi.unwrap_or(0))
                 .await?;
             output::print_or_json(ctx.output, &s, || {
                 println!("{}x{} @{}dpi on {}", s.width, s.height, s.dpi, s.display);
@@ -3312,6 +3315,9 @@ async fn desktop(ctx: &AppContext, cmd: RuntimeDesktopCommand) -> anyhow::Result
             }
             if let Some(window_id) = a.window_id {
                 body["window_id"] = window_id.into();
+            }
+            if let Some(dir) = &a.dir {
+                body["dir"] = dir.clone().into();
             }
             let r = ctx
                 .api

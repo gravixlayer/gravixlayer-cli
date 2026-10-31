@@ -896,6 +896,19 @@ impl<'a> RuntimeBrowserApi<'a> {
     }
 }
 
+/// Options for [`RuntimeDesktopApi::enable`].
+#[derive(Debug, Default)]
+pub struct EnableOptions<'a> {
+    pub width: u32,
+    pub height: u32,
+    pub display: &'a str,
+    pub wm: &'a str,
+    /// Spawn mode override (`""` = platform default).
+    pub mode: &'a str,
+    /// Logical density in DPI (`0` = platform default).
+    pub dpi: u32,
+}
+
 /// Display operations against `/v1/agents/runtime/<id>/display`.
 pub struct RuntimeDesktopApi<'a> {
     client: &'a ApiClient,
@@ -920,22 +933,21 @@ impl<'a> RuntimeDesktopApi<'a> {
     pub async fn enable(
         &self,
         runtime_id: &str,
-        width: u32,
-        height: u32,
-        display: &str,
-        wm: &str,
-        mode: &str,
+        options: EnableOptions<'_>,
     ) -> Result<DisplayStatusResponse, ApiError> {
         self.client
             .execute("runtime.display.enable", || {
                 let mut body = json!({
-                    "width": width,
-                    "height": height,
-                    "display": display,
-                    "wm": wm,
+                    "width": options.width,
+                    "height": options.height,
+                    "display": options.display,
+                    "wm": options.wm,
                 });
-                if !mode.is_empty() {
-                    body["mode"] = mode.into();
+                if !options.mode.is_empty() {
+                    body["mode"] = options.mode.into();
+                }
+                if options.dpi != 0 {
+                    body["dpi"] = options.dpi.into();
                 }
                 self.client
                     .post(self.url(runtime_id, "/enable"))
@@ -1115,12 +1127,13 @@ impl<'a> RuntimeDesktopApi<'a> {
         runtime_id: &str,
         width: u32,
         height: u32,
+        dpi: u32,
     ) -> Result<DisplayInfoResponse, ApiError> {
         self.client
             .execute("runtime.display.resize", || {
                 self.client
                     .post(self.url(runtime_id, "/resize"))
-                    .json(&json!({"width": width, "height": height}))
+                    .json(&json!({"width": width, "height": height, "dpi": dpi}))
             })
             .await
     }

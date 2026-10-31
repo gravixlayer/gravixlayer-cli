@@ -9,6 +9,12 @@ Pre-releases use `X.Y.Z-alpha.N` (for example `0.2.0-alpha.1`) and are published
 as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
+## [0.1.19] - 2026-10-31
+
+### Added
+- **`--dpi` on `desktop enable` / `desktop resize`** and **`--dir` on
+  `desktop record-start`**: mirror the new display/recording options.
+
 ## [0.1.18] - 2026-10-31
 
 ### Fixed
