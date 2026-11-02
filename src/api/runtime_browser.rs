@@ -894,6 +894,372 @@ impl<'a> RuntimeBrowserApi<'a> {
             })
             .await
     }
+
+    /// Thin POST against `/browser/{bid}<tail>` — every wave A–D route is a
+    /// body-in/JSON-out call; `op` names the metric/trace label.
+    async fn post_op(
+        &self,
+        op: &'static str,
+        runtime_id: &str,
+        browser_id: &str,
+        tail: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.client
+            .execute(op, || {
+                self.client
+                    .post(self.url(runtime_id, &format!("/{}{}", seg(browser_id), tail)))
+                    .json(&body)
+            })
+            .await
+    }
+
+    /// `POST .../browser/{bid}/emulate` — field-scoped overrides; only the
+    /// keys carried in `body` change.
+    pub async fn emulate(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.emulate",
+            runtime_id,
+            browser_id,
+            "/emulate",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/intercept` — install `{rules:[...]}`.
+    pub async fn intercept(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.intercept",
+            runtime_id,
+            browser_id,
+            "/intercept",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/intercept/clear` — `{rule_ids?}`; empty clears all.
+    pub async fn intercept_clear(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.intercept.clear",
+            runtime_id,
+            browser_id,
+            "/intercept/clear",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/auth` — `{username, password?|secret_ref?, clear?}`.
+    pub async fn auth(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.auth",
+            runtime_id,
+            browser_id,
+            "/auth",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/extensions/load` — `{path}` → `{extension_id}`.
+    pub async fn extension_load(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        path: &str,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.extension.load",
+            runtime_id,
+            browser_id,
+            "/extensions/load",
+            json!({"path": path}),
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/extensions/unload` — `{extension_id}`.
+    pub async fn extension_unload(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        extension_id: &str,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.extension.unload",
+            runtime_id,
+            browser_id,
+            "/extensions/unload",
+            json!({"extension_id": extension_id}),
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/cdp_endpoint` — `{port?, token?}` →
+    /// `{port, path, token}`.
+    pub async fn cdp_endpoint(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.cdp_endpoint",
+            runtime_id,
+            browser_id,
+            "/cdp_endpoint",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/cdp_endpoint/stop` — tears down the bridge.
+    pub async fn cdp_endpoint_stop(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.cdp_endpoint.stop",
+            runtime_id,
+            browser_id,
+            "/cdp_endpoint/stop",
+            json!({}),
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/approvals` — `{message, timeout_ms?}`; parks
+    /// until resolved or the timeout lapses.
+    pub async fn approval_request(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.approval.request",
+            runtime_id,
+            browser_id,
+            "/approvals",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/approvals/{aid}/resolve` — `{approved, note?}`.
+    pub async fn approval_resolve(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        approval_id: &str,
+        approved: bool,
+        note: &str,
+    ) -> Result<Value, ApiError> {
+        let mut body = json!({"approved": approved});
+        if !note.is_empty() {
+            body["note"] = note.into();
+        }
+        self.post_op(
+            "runtime.browser.approval.resolve",
+            runtime_id,
+            browser_id,
+            &format!("/approvals/{}/resolve", seg(approval_id)),
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/content` — `{target_id, format?}`.
+    pub async fn content(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.content",
+            runtime_id,
+            browser_id,
+            "/content",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/cookies` — `{op?, context_id?, ...}`; no `op`
+    /// lists, `set`/`delete`/`clear` mutate.
+    pub async fn cookies(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.cookies",
+            runtime_id,
+            browser_id,
+            "/cookies",
+            body,
+        )
+        .await
+    }
+
+    /// `DELETE .../browser/{bid}/downloads/{did}?delete_file=`.
+    pub async fn download_delete(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        download_id: &str,
+        delete_file: bool,
+    ) -> Result<Value, ApiError> {
+        let suffix = if delete_file { "?delete_file=true" } else { "" };
+        self.client
+            .execute("runtime.browser.download.delete", || {
+                self.client.delete(self.url(
+                    runtime_id,
+                    &format!(
+                        "/{}/downloads/{}{}",
+                        seg(browser_id),
+                        seg(download_id),
+                        suffix
+                    ),
+                ))
+            })
+            .await
+    }
+
+    /// `POST .../browser/{bid}/targets/{tid}/recording/{verb}` — per-target
+    /// screencast start/stop.
+    pub async fn target_recording(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        target_id: &str,
+        verb: &str,
+    ) -> Result<Value, ApiError> {
+        let op = if verb == "start" {
+            "runtime.browser.recording.start"
+        } else {
+            "runtime.browser.recording.stop"
+        };
+        self.post_op(
+            op,
+            runtime_id,
+            browser_id,
+            &format!("/targets/{}/recording/{}", seg(target_id), verb),
+            json!({}),
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/recordings/export` — `{recording_id, dest_dir}`.
+    pub async fn recording_export(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        recording_id: &str,
+        dest_dir: &str,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.recording.export",
+            runtime_id,
+            browser_id,
+            "/recordings/export",
+            json!({"recording_id": recording_id, "dest_dir": dest_dir}),
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/profile/export` — `{dest_path?}`.
+    pub async fn profile_export(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.profile.export",
+            runtime_id,
+            browser_id,
+            "/profile/export",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/profile/import` — `{archive_path}`.
+    pub async fn profile_import(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        archive_path: &str,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.profile.import",
+            runtime_id,
+            browser_id,
+            "/profile/import",
+            json!({"archive_path": archive_path}),
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/replay` — `{steps:[...], stop_on_fail?}`.
+    pub async fn replay(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.replay",
+            runtime_id,
+            browser_id,
+            "/replay",
+            body,
+        )
+        .await
+    }
+
+    /// `POST .../browser/{bid}/fork` — `{count, url?}`; cohort 1–8.
+    pub async fn fork(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        body: Value,
+    ) -> Result<Value, ApiError> {
+        self.post_op(
+            "runtime.browser.fork",
+            runtime_id,
+            browser_id,
+            "/fork",
+            body,
+        )
+        .await
+    }
 }
 
 /// Options for [`RuntimeDesktopApi::enable`].
@@ -2343,6 +2709,110 @@ mod tests {
             .await
             .unwrap();
         assert!(resp.status().is_success());
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn wave_ad_routes_hit_their_paths() {
+        // Every wave A-D op posts to the documented subroute with its body.
+        let server = MockServer::start_async().await;
+        for (method, tail) in [
+            ("POST", "browser/b1/emulate"),
+            ("POST", "browser/b1/intercept"),
+            ("POST", "browser/b1/intercept/clear"),
+            ("POST", "browser/b1/auth"),
+            ("POST", "browser/b1/extensions/load"),
+            ("POST", "browser/b1/extensions/unload"),
+            ("POST", "browser/b1/cdp_endpoint"),
+            ("POST", "browser/b1/cdp_endpoint/stop"),
+            ("POST", "browser/b1/approvals"),
+            ("POST", "browser/b1/approvals/a1/resolve"),
+            ("POST", "browser/b1/content"),
+            ("POST", "browser/b1/cookies"),
+            ("POST", "browser/b1/targets/t9/recording/start"),
+            ("POST", "browser/b1/targets/t9/recording/stop"),
+            ("POST", "browser/b1/recordings/export"),
+            ("POST", "browser/b1/profile/export"),
+            ("POST", "browser/b1/profile/import"),
+            ("POST", "browser/b1/replay"),
+            ("POST", "browser/b1/fork"),
+        ] {
+            server
+                .mock_async(|when, then| {
+                    when.method(httpmock::Method::POST).path(path(tail));
+                    then.status(200).json_body(json!({"ok": true}));
+                })
+                .await;
+            let _ = method;
+        }
+        let api = client(&server);
+        let b = api.runtime_browser();
+        b.emulate(RT, "b1", json!({"timezone": "UTC"}))
+            .await
+            .unwrap();
+        b.intercept(RT, "b1", json!({"rules": []})).await.unwrap();
+        b.intercept_clear(RT, "b1", json!({})).await.unwrap();
+        b.auth(RT, "b1", json!({"username": "u"})).await.unwrap();
+        b.extension_load(RT, "b1", "/workspace/ext").await.unwrap();
+        b.extension_unload(RT, "b1", "x1").await.unwrap();
+        b.cdp_endpoint(RT, "b1", json!({})).await.unwrap();
+        b.cdp_endpoint_stop(RT, "b1").await.unwrap();
+        b.approval_request(RT, "b1", json!({"message": "ok?"}))
+            .await
+            .unwrap();
+        b.approval_resolve(RT, "b1", "a1", true, "").await.unwrap();
+        b.content(RT, "b1", json!({"target_id": "t1"}))
+            .await
+            .unwrap();
+        b.cookies(RT, "b1", json!({})).await.unwrap();
+        b.target_recording(RT, "b1", "t9", "start").await.unwrap();
+        b.target_recording(RT, "b1", "t9", "stop").await.unwrap();
+        b.recording_export(RT, "b1", "rec1", "/workspace/out")
+            .await
+            .unwrap();
+        b.profile_export(RT, "b1", json!({"dest_path": "/p.tar"}))
+            .await
+            .unwrap();
+        b.profile_import(RT, "b1", "/p.tar").await.unwrap();
+        b.replay(RT, "b1", json!({"steps": []})).await.unwrap();
+        b.fork(RT, "b1", json!({"count": 2})).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_delete_uses_delete_verb_with_flag() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::DELETE)
+                    .path(path("browser/b1/downloads/d7"))
+                    .query_param("delete_file", "true");
+                then.status(200).json_body(json!({"ok": true}));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .download_delete(RT, "b1", "d7", true)
+            .await
+            .unwrap();
+        m.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn extension_unload_sends_the_extension_id() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path(path("browser/b1/extensions/unload"))
+                    .json_body(json!({"extension_id": "x1"}));
+                then.status(200).json_body(json!({"ok": true}));
+            })
+            .await;
+        client(&server)
+            .runtime_browser()
+            .extension_unload(RT, "b1", "x1")
+            .await
+            .unwrap();
         m.assert_async().await;
     }
 }

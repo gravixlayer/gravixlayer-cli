@@ -2408,8 +2408,31 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                         .collect();
                     body["keys"] = serde_json::json!(keys);
                 }
+                "check" | "uncheck" | "focus" | "blur" | "scroll_into_view" => {}
+                "select" => {
+                    body["option"] = serde_json::json!(a.value.as_deref().unwrap_or(""));
+                }
+                "upload" => {
+                    let paths: Vec<String> = a
+                        .value
+                        .as_deref()
+                        .unwrap_or("")
+                        .split(',')
+                        .map(|p| p.trim().to_string())
+                        .filter(|p| !p.is_empty())
+                        .collect();
+                    anyhow::ensure!(!paths.is_empty(), "upload needs --value with guest paths");
+                    body["paths"] = serde_json::json!(paths);
+                }
+                "drag_to" => {
+                    let dt = browser_target_arg(a.drop.as_deref(), None)?
+                        .context("drag_to needs --drop with a target spec")?;
+                    body["drop_target"] = dt;
+                }
                 _ => {
-                    anyhow::bail!("verb must be click|dblclick|hover|fill|type|press|hotkey|scroll")
+                    anyhow::bail!(
+                        "verb must be click|dblclick|hover|fill|type|press|hotkey|scroll|select|check|uncheck|focus|blur|scroll_into_view|upload|drag_to"
+                    )
                 }
             }
             if a.verb == "scroll" {
@@ -2669,6 +2692,399 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                 .api
                 .runtime_browser()
                 .storage_import(&a.id, &a.browser, state, a.context.as_deref().unwrap_or(""))
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::Emulate(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({
+                "target_id": a.tab.as_deref().unwrap_or(""),
+            });
+            if let Some(v) = &a.viewport {
+                body["viewport"] = serde_json::from_str(v).with_context(|| {
+                    "--viewport must be JSON like {\"width\":1280,\"height\":800}".to_string()
+                })?;
+            }
+            if let Some(g) = &a.geolocation {
+                body["geolocation"] = serde_json::from_str(g).with_context(|| {
+                    "--geolocation must be JSON like {\"latitude\":40.7,\"longitude\":-74}"
+                        .to_string()
+                })?;
+            }
+            if let Some(t) = &a.timezone {
+                body["timezone"] = serde_json::json!(t);
+            }
+            if let Some(l) = &a.locale {
+                body["locale"] = serde_json::json!(l);
+            }
+            if let Some(u) = &a.user_agent {
+                body["user_agent"] = serde_json::json!(u);
+            }
+            if let Some(t) = a.touch {
+                body["touch"] = serde_json::json!(t);
+            }
+            if let Some(c) = &a.color_scheme {
+                body["color_scheme"] = serde_json::json!(c);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .emulate(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::Intercept(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let rules: serde_json::Value = match (&a.rules, &a.rules_file) {
+                (Some(inline), None) => serde_json::from_str(inline)
+                    .with_context(|| "--rules must be a JSON array".to_string())?,
+                (None, Some(path)) => {
+                    let raw =
+                        std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+                    serde_json::from_str(&raw)
+                        .with_context(|| format!("{path} must contain a JSON array"))?
+                }
+                (None, None) => anyhow::bail!("pass --rules '<json>' or --rules-file <path>"),
+                (Some(_), Some(_)) => unreachable!("clap conflicts_with"),
+            };
+            anyhow::ensure!(rules.is_array(), "rules must be a JSON array");
+            let body = serde_json::json!({
+                "rules": rules,
+                "target_id": a.tab.as_deref().unwrap_or(""),
+            });
+            let r = ctx
+                .api
+                .runtime_browser()
+                .intercept(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::InterceptClear(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if let Some(ids) = &a.rule_ids {
+                let list: Vec<&str> = ids
+                    .split(',')
+                    .map(|s| s.trim())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                body["rule_ids"] = serde_json::json!(list);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .intercept_clear(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::Auth(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if let Some(u) = &a.username {
+                body["username"] = serde_json::json!(u);
+            }
+            if let Some(s) = &a.secret_ref {
+                body["secret_ref"] = serde_json::json!(s);
+            } else if let Some(p) = &a.password {
+                body["password"] = serde_json::json!(p);
+            }
+            if a.clear {
+                body["clear"] = serde_json::json!(true);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .auth(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::ExtensionLoad(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .extension_load(&a.id, &a.browser, &a.path)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::ExtensionUnload(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .extension_unload(&a.id, &a.browser, &a.extension_id)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::CdpEndpoint(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if let Some(p) = a.port {
+                body["port"] = serde_json::json!(p);
+            }
+            if let Some(t) = &a.token {
+                body["token"] = serde_json::json!(t);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .cdp_endpoint(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::CdpEndpointStop(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .cdp_endpoint_stop(&a.id, &a.browser)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::ApprovalRequest(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({ "message": a.message });
+            if let Some(t) = a.timeout_ms {
+                body["timeout_ms"] = serde_json::json!(t);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .approval_request(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::ApprovalResolve(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .approval_resolve(
+                    &a.id,
+                    &a.browser,
+                    &a.approval_id,
+                    !a.deny,
+                    a.note.as_deref().unwrap_or(""),
+                )
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::Content(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({ "target_id": a.tab });
+            if let Some(f) = &a.format {
+                body["format"] = serde_json::json!(f);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .content(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::Cookies(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if let Some(c) = &a.context {
+                body["context_id"] = serde_json::json!(c);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .cookies(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::CookieClear(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({ "op": "clear" });
+            if let Some(c) = &a.context {
+                body["context_id"] = serde_json::json!(c);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .cookies(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::CookieSet(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({
+                "op": "set",
+                "name": a.name,
+                "value": a.value,
+            });
+            if let Some(u) = &a.url {
+                body["url"] = serde_json::json!(u);
+            }
+            if let Some(c) = &a.context {
+                body["context_id"] = serde_json::json!(c);
+            }
+            if let Some(attrs) = &a.attrs {
+                body["attrs"] = serde_json::from_str(attrs)
+                    .with_context(|| "--attrs must be a JSON object".to_string())?;
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .cookies(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::CookieDelete(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({ "op": "delete", "name": a.name });
+            if let Some(u) = &a.url {
+                body["url"] = serde_json::json!(u);
+            }
+            if let Some(c) = &a.context {
+                body["context_id"] = serde_json::json!(c);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .cookies(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::DownloadDelete(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .download_delete(&a.id, &a.browser, &a.download_id, a.delete_file)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::RecordingStart(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .target_recording(&a.id, &a.browser, &a.tab, "start")
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::RecordingStop(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .target_recording(&a.id, &a.browser, &a.tab, "stop")
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::RecordingExport(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .recording_export(&a.id, &a.browser, &a.recording_id, &a.dest_dir)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::ProfileExport(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if let Some(d) = &a.dest {
+                body["dest_path"] = serde_json::json!(d);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .profile_export(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::ProfileImport(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let r = ctx
+                .api
+                .runtime_browser()
+                .profile_import(&a.id, &a.browser, &a.archive_path)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::Replay(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let steps: serde_json::Value = match (&a.steps, &a.steps_file) {
+                (Some(inline), None) => serde_json::from_str(inline)
+                    .with_context(|| "--steps must be a JSON array".to_string())?,
+                (None, Some(path)) => {
+                    let raw =
+                        std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+                    serde_json::from_str(&raw)
+                        .with_context(|| format!("{path} must contain a JSON array"))?
+                }
+                (None, None) => anyhow::bail!("pass --steps '<json>' or --steps-file <path>"),
+                (Some(_), Some(_)) => unreachable!("clap conflicts_with"),
+            };
+            anyhow::ensure!(steps.is_array(), "steps must be a JSON array");
+            let body = serde_json::json!({ "steps": steps, "stop_on_fail": a.stop_on_fail });
+            let r = ctx
+                .api
+                .runtime_browser()
+                .replay(&a.id, &a.browser, body)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
+        RuntimeBrowserCommand::Fork(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({ "count": a.count });
+            if let Some(u) = &a.url {
+                body["url"] = serde_json::json!(u);
+            }
+            let r = ctx
+                .api
+                .runtime_browser()
+                .fork(&a.id, &a.browser, body)
                 .await?;
             output::print_or_json(ctx.output, &r, || {
                 println!("{r:#}");

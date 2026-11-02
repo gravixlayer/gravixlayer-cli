@@ -346,6 +346,52 @@ pub enum RuntimeBrowserCommand {
     StorageExport(RuntimeBrowserStorageExportArgs),
     /// Import cookies/origins into a context
     StorageImport(RuntimeBrowserStorageImportArgs),
+    /// Apply emulation overrides (viewport/geo/tz/locale/UA/touch/scheme)
+    Emulate(RuntimeBrowserEmulateArgs),
+    /// Install request-interception rules (continue|block|mock)
+    Intercept(RuntimeBrowserInterceptArgs),
+    /// Remove interception rules (all when no ids given)
+    InterceptClear(RuntimeBrowserInterceptClearArgs),
+    /// Arm HTTP basic/digest auth answering in-page
+    Auth(RuntimeBrowserAuthArgs),
+    /// Hot-load an unpacked extension from a guest directory
+    ExtensionLoad(RuntimeBrowserPathArgs),
+    /// Unload an extension by ID
+    ExtensionUnload(RuntimeBrowserExtensionIdArgs),
+    /// Start the tokened CDP WebSocket bridge for external drivers
+    CdpEndpoint(RuntimeBrowserCdpEndpointArgs),
+    /// Tear down the CDP bridge
+    CdpEndpointStop(RuntimeBrowserIdArgs),
+    /// Ask an operator for approval (parks until resolved/timeout)
+    ApprovalRequest(RuntimeBrowserApprovalArgs),
+    /// Resolve a pending approval
+    ApprovalResolve(RuntimeBrowserApprovalResolveArgs),
+    /// Serialized page content — rendered HTML by default
+    Content(RuntimeBrowserContentArgs),
+    /// List a context's cookies
+    Cookies(RuntimeBrowserCookiesArgs),
+    /// Set one cookie
+    CookieSet(RuntimeBrowserCookieSetArgs),
+    /// Delete one cookie by name
+    CookieDelete(RuntimeBrowserCookieDeleteArgs),
+    /// Clear every cookie in the context
+    CookieClear(RuntimeBrowserCookiesArgs),
+    /// Drop a download record (optionally the file)
+    DownloadDelete(RuntimeBrowserDownloadDeleteArgs),
+    /// Start a per-target video recording
+    RecordingStart(RuntimeBrowserTabArgs),
+    /// Stop a target recording
+    RecordingStop(RuntimeBrowserTabArgs),
+    /// Copy a finished recording's artifacts to a guest dir
+    RecordingExport(RuntimeBrowserRecordingExportArgs),
+    /// Quiesce and tar the browser profile (durable auth)
+    ProfileExport(RuntimeBrowserProfileExportArgs),
+    /// Respawn the browser against an exported profile tar
+    ProfileImport(RuntimeBrowserProfileImportArgs),
+    /// Replay recorded action steps with per-step effect checks
+    Replay(RuntimeBrowserReplayArgs),
+    /// Fork the page into a cohort of identical targets (1-8)
+    Fork(RuntimeBrowserForkArgs),
 }
 
 #[derive(Debug, Subcommand)]
@@ -586,7 +632,9 @@ pub struct RuntimeBrowserActionArgs {
     /// Browser ID (e.g. b1)
     #[arg(long, default_value = "b1")]
     pub browser: String,
-    /// click | dblclick | hover | fill | type | press | hotkey | scroll
+    /// click | dblclick | hover | fill | type | press | hotkey | scroll |
+    /// select | check | uncheck | focus | blur | scroll_into_view |
+    /// drag_to | upload
     pub verb: String,
     /// Element: ref (e3), selector (css:#x / text=Sign in), or x,y
     #[arg(long)]
@@ -596,10 +644,15 @@ pub struct RuntimeBrowserActionArgs {
     /// DOM / iframe targets
     #[arg(long, conflicts_with = "target")]
     pub target_json: Option<String>,
+    /// Drop destination for drag_to — same spec as --target
+    #[arg(long)]
+    pub drop: Option<String>,
     /// Target (tab) ID
     #[arg(long)]
     pub tab: Option<String>,
-    /// Text for fill/type; key for press; "ctrl+c" for hotkey; "dx,dy" scroll
+    /// Text for fill/type; key for press; "ctrl+c" for hotkey; "dx,dy"
+    /// scroll; option value for select; comma-separated guest paths for
+    /// upload
     #[arg(long)]
     pub value: Option<String>,
     /// Secret name — fills without the value crossing the client
@@ -1145,6 +1198,319 @@ pub struct RuntimeBrowserStorageImportArgs {
     /// Read the storage state from this file
     #[arg(long, conflicts_with = "state")]
     pub state_file: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserTabArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub tab: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserEmulateArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub tab: Option<String>,
+    /// Viewport as JSON — `{"width":1280,"height":800,"scale":1}`
+    #[arg(long)]
+    pub viewport: Option<String>,
+    /// Geolocation as JSON — `{"latitude":40.7,"longitude":-74.0,"accuracy":50}`
+    #[arg(long)]
+    pub geolocation: Option<String>,
+    /// IANA timezone (e.g. America/New_York)
+    #[arg(long)]
+    pub timezone: Option<String>,
+    /// Locale (e.g. en-US) — also sets accept-language
+    #[arg(long)]
+    pub locale: Option<String>,
+    /// User-Agent override
+    #[arg(long)]
+    pub user_agent: Option<String>,
+    /// Touch emulation
+    #[arg(long)]
+    pub touch: Option<bool>,
+    /// Color scheme: light | dark
+    #[arg(long)]
+    pub color_scheme: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserInterceptArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Rules as inline JSON — `[{"url_pattern":"*/admin/*","action":"block"}]`
+    #[arg(long, conflicts_with = "rules_file")]
+    pub rules: Option<String>,
+    /// Read the rules array from this file
+    #[arg(long, conflicts_with = "rules")]
+    pub rules_file: Option<String>,
+    /// Target (tab) ID the rules apply to
+    #[arg(long)]
+    pub tab: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserInterceptClearArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Rule IDs to remove — comma-separated; omit to clear all
+    #[arg(long)]
+    pub rule_ids: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserAuthArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Challenge username
+    #[arg(long)]
+    pub username: Option<String>,
+    /// Challenge password (prefer --secret-ref for production)
+    #[arg(long)]
+    pub password: Option<String>,
+    /// Secret name — password resolves server-side
+    #[arg(long, conflicts_with = "password")]
+    pub secret_ref: Option<String>,
+    /// Disarm the auth handler
+    #[arg(long)]
+    pub clear: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserPathArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Guest path (extension dir under /workspace)
+    pub path: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserExtensionIdArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Extension ID from extension-load
+    pub extension_id: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserCdpEndpointArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Bridge port — 0 lets the guest pick
+    #[arg(long)]
+    pub port: Option<u16>,
+    /// Auth token — minted when omitted
+    #[arg(long)]
+    pub token: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserApprovalArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// What the operator is being asked to approve
+    pub message: String,
+    /// Wait bound (ms) — 0 uses the server default
+    #[arg(long)]
+    pub timeout_ms: Option<u64>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserApprovalResolveArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Approval ID (a1, …)
+    pub approval_id: String,
+    /// Deny instead of approve
+    #[arg(long)]
+    pub deny: bool,
+    /// Operator note returned to the requester
+    #[arg(long)]
+    pub note: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserContentArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub tab: String,
+    /// Extraction format — rendered HTML by default
+    #[arg(long)]
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserCookiesArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Context ID — omitted addresses the default context
+    #[arg(long)]
+    pub context: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserCookieSetArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Cookie name
+    pub name: String,
+    /// Cookie value
+    pub value: String,
+    /// URL the cookie is scoped to
+    #[arg(long)]
+    pub url: Option<String>,
+    /// Context ID — omitted addresses the default context
+    #[arg(long)]
+    pub context: Option<String>,
+    /// Extra attrs as JSON — `{"domain":".x","path":"/","secure":true,"expires":1.9e9}`
+    #[arg(long)]
+    pub attrs: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserCookieDeleteArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Cookie name
+    pub name: String,
+    /// URL scope of the match
+    #[arg(long)]
+    pub url: Option<String>,
+    /// Context ID — omitted addresses the default context
+    #[arg(long)]
+    pub context: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserDownloadDeleteArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Download ID
+    pub download_id: String,
+    /// Also remove the file in the guest
+    #[arg(long)]
+    pub delete_file: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserRecordingExportArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Recording ID from recording-start/stop
+    pub recording_id: String,
+    /// Destination directory in the guest (under /workspace)
+    pub dest_dir: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserProfileExportArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Tar destination in the guest (under /workspace)
+    #[arg(long)]
+    pub dest: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserProfileImportArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Guest path of a previously exported profile tar
+    pub archive_path: String,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserReplayArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Steps as inline JSON — `[{"action":{...},"expect_url":"..."}]`
+    #[arg(long, conflicts_with = "steps_file")]
+    pub steps: Option<String>,
+    /// Read the steps array from this file
+    #[arg(long, conflicts_with = "steps")]
+    pub steps_file: Option<String>,
+    /// Halt the replay on the first failed effect check
+    #[arg(long)]
+    pub stop_on_fail: bool,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserForkArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Cohort size (1-8)
+    #[arg(long, default_value = "1")]
+    pub count: u32,
+    /// URL each fork navigates to after creation
+    #[arg(long)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Args)]
