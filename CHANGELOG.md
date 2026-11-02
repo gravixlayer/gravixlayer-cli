@@ -9,6 +9,23 @@ Pre-releases use `X.Y.Z-alpha.N` (for example `0.2.0-alpha.1`) and are published
 as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
+## [Unreleased]
+
+### Fixed
+- **`runtime browser emulate` now sends the wire's flat fields** —
+  `--viewport` JSON maps to `width`/`height`/`device_scale_factor`,
+  `--geolocation` to `geolocation_lat`/`geolocation_lon`/
+  `geolocation_accuracy`, and `--timezone` to `timezone_id`. Previously
+  the nested objects were sent under keys the API does not read, so the
+  overrides were silently dropped. Also added `--mobile`, `--context`,
+  and `--clear`.
+- **Missing scoping flags added**: `--tab` on `intercept-clear`, `auth`,
+  `replay`, `fork`, and `content` (now optional — the active tab when
+  omitted); `--step-timeout-ms` on `replay`; `--fps` and `--quality` on
+  `recording-start`; `--url` filter on `cookies`. The `cookie-set
+  --attrs` help now shows the string-valued, camelCase keys the API
+  expects (`httpOnly`, `sameSite`).
+
 ## [0.1.20] - 2026-11-01
 
 ### Added

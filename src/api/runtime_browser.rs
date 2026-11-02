@@ -1159,6 +1159,7 @@ impl<'a> RuntimeBrowserApi<'a> {
         browser_id: &str,
         target_id: &str,
         verb: &str,
+        body: Value,
     ) -> Result<Value, ApiError> {
         let op = if verb == "start" {
             "runtime.browser.recording.start"
@@ -1170,7 +1171,7 @@ impl<'a> RuntimeBrowserApi<'a> {
             runtime_id,
             browser_id,
             &format!("/targets/{}/recording/{}", seg(target_id), verb),
-            json!({}),
+            body,
         )
         .await
     }
@@ -2765,8 +2766,12 @@ mod tests {
             .await
             .unwrap();
         b.cookies(RT, "b1", json!({})).await.unwrap();
-        b.target_recording(RT, "b1", "t9", "start").await.unwrap();
-        b.target_recording(RT, "b1", "t9", "stop").await.unwrap();
+        b.target_recording(RT, "b1", "t9", "start", json!({"fps": 8}))
+            .await
+            .unwrap();
+        b.target_recording(RT, "b1", "t9", "stop", json!({}))
+            .await
+            .unwrap();
         b.recording_export(RT, "b1", "rec1", "/workspace/out")
             .await
             .unwrap();

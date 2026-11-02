@@ -379,7 +379,7 @@ pub enum RuntimeBrowserCommand {
     /// Drop a download record (optionally the file)
     DownloadDelete(RuntimeBrowserDownloadDeleteArgs),
     /// Start a per-target video recording
-    RecordingStart(RuntimeBrowserTabArgs),
+    RecordingStart(RuntimeBrowserRecordingStartArgs),
     /// Stop a target recording
     RecordingStop(RuntimeBrowserTabArgs),
     /// Copy a finished recording's artifacts to a guest dir
@@ -1213,6 +1213,24 @@ pub struct RuntimeBrowserTabArgs {
 }
 
 #[derive(Debug, Args)]
+pub struct RuntimeBrowserRecordingStartArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// Target (tab) ID
+    #[arg(long)]
+    pub tab: String,
+    /// Capture frame rate (frames/second; 0 = guest default)
+    #[arg(long)]
+    pub fps: Option<u32>,
+    /// JPEG quality 1-100 (0 = guest default)
+    #[arg(long)]
+    pub quality: Option<u32>,
+}
+
+#[derive(Debug, Args)]
 pub struct RuntimeBrowserEmulateArgs {
     /// Runtime ID (UUID)
     pub id: String,
@@ -1237,12 +1255,21 @@ pub struct RuntimeBrowserEmulateArgs {
     /// User-Agent override
     #[arg(long)]
     pub user_agent: Option<String>,
+    /// Mobile viewport emulation
+    #[arg(long)]
+    pub mobile: Option<bool>,
     /// Touch emulation
     #[arg(long)]
     pub touch: Option<bool>,
     /// Color scheme: light | dark
     #[arg(long)]
     pub color_scheme: Option<String>,
+    /// Context ID — scopes overrides to one context
+    #[arg(long)]
+    pub context: Option<String>,
+    /// Drop every override on the scope
+    #[arg(long)]
+    pub clear: bool,
 }
 
 #[derive(Debug, Args)]
@@ -1273,6 +1300,9 @@ pub struct RuntimeBrowserInterceptClearArgs {
     /// Rule IDs to remove — comma-separated; omit to clear all
     #[arg(long)]
     pub rule_ids: Option<String>,
+    /// Target (tab) ID the rules applied to
+    #[arg(long)]
+    pub tab: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1294,6 +1324,9 @@ pub struct RuntimeBrowserAuthArgs {
     /// Disarm the auth handler
     #[arg(long)]
     pub clear: bool,
+    /// Target (tab) ID the handler applies to
+    #[arg(long)]
+    pub tab: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1371,9 +1404,9 @@ pub struct RuntimeBrowserContentArgs {
     /// Browser ID (e.g. b1)
     #[arg(long, default_value = "b1")]
     pub browser: String,
-    /// Target (tab) ID
+    /// Target (tab) ID — omitted reads the active tab
     #[arg(long)]
-    pub tab: String,
+    pub tab: Option<String>,
     /// Extraction format — rendered HTML by default
     #[arg(long)]
     pub format: Option<String>,
@@ -1389,6 +1422,9 @@ pub struct RuntimeBrowserCookiesArgs {
     /// Context ID — omitted addresses the default context
     #[arg(long)]
     pub context: Option<String>,
+    /// Only return cookies visible to this URL
+    #[arg(long)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1408,7 +1444,7 @@ pub struct RuntimeBrowserCookieSetArgs {
     /// Context ID — omitted addresses the default context
     #[arg(long)]
     pub context: Option<String>,
-    /// Extra attrs as JSON — `{"domain":".x","path":"/","secure":true,"expires":1.9e9}`
+    /// Extra attrs as JSON — `{"domain":".x","path":"/","secure":"true","httpOnly":"true","sameSite":"Lax","expires":"1735689600"}`
     #[arg(long)]
     pub attrs: Option<String>,
 }
@@ -1496,6 +1532,12 @@ pub struct RuntimeBrowserReplayArgs {
     /// Halt the replay on the first failed effect check
     #[arg(long)]
     pub stop_on_fail: bool,
+    /// Per-step timeout in milliseconds
+    #[arg(long)]
+    pub step_timeout_ms: Option<u64>,
+    /// Target (tab) ID to replay in
+    #[arg(long)]
+    pub tab: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -1511,6 +1553,9 @@ pub struct RuntimeBrowserForkArgs {
     /// URL each fork navigates to after creation
     #[arg(long)]
     pub url: Option<String>,
+    /// Source target (tab) ID to clone — omitted uses the active tab
+    #[arg(long)]
+    pub tab: Option<String>,
 }
 
 #[derive(Debug, Args)]

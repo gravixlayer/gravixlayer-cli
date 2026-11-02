@@ -2776,6 +2776,9 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                     .collect();
                 body["rule_ids"] = serde_json::json!(list);
             }
+            if let Some(t) = &a.tab {
+                body["target_id"] = serde_json::json!(t);
+            }
             let r = ctx
                 .api
                 .runtime_browser()
@@ -2798,6 +2801,9 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             }
             if a.clear {
                 body["clear"] = serde_json::json!(true);
+            }
+            if let Some(t) = &a.tab {
+                body["target_id"] = serde_json::json!(t);
             }
             let r = ctx
                 .api
@@ -2893,7 +2899,10 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
         }
         RuntimeBrowserCommand::Content(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
-            let mut body = serde_json::json!({ "target_id": a.tab });
+            let mut body = serde_json::json!({});
+            if let Some(t) = &a.tab {
+                body["target_id"] = serde_json::json!(t);
+            }
             if let Some(f) = &a.format {
                 body["format"] = serde_json::json!(f);
             }
@@ -2911,6 +2920,9 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             let mut body = serde_json::json!({});
             if let Some(c) = &a.context {
                 body["context_id"] = serde_json::json!(c);
+            }
+            if let Some(u) = &a.url {
+                body["url"] = serde_json::json!(u);
             }
             let r = ctx
                 .api
@@ -2993,10 +3005,17 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
         }
         RuntimeBrowserCommand::RecordingStart(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
+            let mut body = serde_json::json!({});
+            if let Some(f) = a.fps {
+                body["fps"] = serde_json::json!(f);
+            }
+            if let Some(q) = a.quality {
+                body["quality"] = serde_json::json!(q);
+            }
             let r = ctx
                 .api
                 .runtime_browser()
-                .target_recording(&a.id, &a.browser, &a.tab, "start")
+                .target_recording(&a.id, &a.browser, &a.tab, "start", body)
                 .await?;
             output::print_or_json(ctx.output, &r, || {
                 println!("{r:#}");
@@ -3007,7 +3026,7 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             let r = ctx
                 .api
                 .runtime_browser()
-                .target_recording(&a.id, &a.browser, &a.tab, "stop")
+                .target_recording(&a.id, &a.browser, &a.tab, "stop", serde_json::json!({}))
                 .await?;
             output::print_or_json(ctx.output, &r, || {
                 println!("{r:#}");
@@ -3065,7 +3084,13 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                 (Some(_), Some(_)) => unreachable!("clap conflicts_with"),
             };
             anyhow::ensure!(steps.is_array(), "steps must be a JSON array");
-            let body = serde_json::json!({ "steps": steps, "stop_on_fail": a.stop_on_fail });
+            let mut body = serde_json::json!({ "steps": steps, "stop_on_fail": a.stop_on_fail });
+            if let Some(ms) = a.step_timeout_ms {
+                body["step_timeout_ms"] = serde_json::json!(ms);
+            }
+            if let Some(t) = &a.tab {
+                body["target_id"] = serde_json::json!(t);
+            }
             let r = ctx
                 .api
                 .runtime_browser()
@@ -3080,6 +3105,9 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
             let mut body = serde_json::json!({ "count": a.count });
             if let Some(u) = &a.url {
                 body["url"] = serde_json::json!(u);
+            }
+            if let Some(t) = &a.tab {
+                body["target_id"] = serde_json::json!(t);
             }
             let r = ctx
                 .api
