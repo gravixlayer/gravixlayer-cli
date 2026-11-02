@@ -1869,6 +1869,9 @@ pub struct RuntimeExecArgs {
     /// Return as soon as the command is running. Prints the command record, including its pid.
     #[arg(long)]
     pub background: bool,
+    /// Login name to run the command as (e.g. root). Defaults to the runtime identity.
+    #[arg(long)]
+    pub user: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -2715,6 +2718,9 @@ pub struct TemplateBuildArgs {
     /// Command to run after VM starts
     #[arg(long)]
     pub start_cmd: Option<String>,
+    /// Login `start_cmd` runs as during provisioning (e.g. root)
+    #[arg(long)]
+    pub start_user: Option<String>,
     /// Readiness check command
     #[arg(long)]
     pub ready_cmd: Option<String>,
@@ -2941,6 +2947,9 @@ pub struct AgentBuildArgs {
     /// Command to run after VM starts during snapshot phase
     #[arg(long)]
     pub start_cmd: Option<String>,
+    /// Login `start_cmd` runs as during provisioning (e.g. root)
+    #[arg(long)]
+    pub start_user: Option<String>,
     /// Readiness command during snapshot phase
     #[arg(long)]
     pub ready_cmd: Option<String>,
@@ -3052,6 +3061,9 @@ pub struct AgentDeployArgs {
     /// Command to run after VM starts during snapshot phase
     #[arg(long)]
     pub start_cmd: Option<String>,
+    /// Login `start_cmd` runs as during provisioning (e.g. root)
+    #[arg(long)]
+    pub start_user: Option<String>,
     /// Readiness command during snapshot phase
     #[arg(long)]
     pub ready_cmd: Option<String>,

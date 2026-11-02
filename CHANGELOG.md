@@ -11,6 +11,13 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+### Added
+- `runtime exec --user <name>` runs the command as the named guest
+  user (validated server-side; defaults to the session user).
+- `template build --start-user <name>` and `agent build --start-user
+  <name>` set the login the template entrypoint runs as, serialized as
+  `start_user` on the wire.
+
 ### Fixed
 - **`runtime browser emulate` now sends the wire's flat fields** —
   `--viewport` JSON maps to `width`/`height`/`device_scale_factor`,

@@ -603,6 +603,8 @@ pub struct AgentBuildMetadata {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_cmd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_user: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub ready_cmd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ready_timeout_secs: Option<u32>,

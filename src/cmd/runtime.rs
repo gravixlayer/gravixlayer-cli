@@ -444,6 +444,9 @@ async fn exec(ctx: &AppContext, args: RuntimeExecArgs) -> anyhow::Result<()> {
     if args.background {
         payload["background"] = serde_json::json!(true);
     }
+    if let Some(user) = &args.user {
+        payload["user"] = serde_json::json!(user);
+    }
     if args.stream {
         return exec_stream(ctx, &args.id, &payload).await;
     }

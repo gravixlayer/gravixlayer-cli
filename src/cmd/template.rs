@@ -221,6 +221,7 @@ fn template_build_body(
     insert_if_some_u32(&mut body, "memory_mb", args.memory_mb);
     insert_if_some_u32(&mut body, "disk_mb", args.disk_mb);
     insert_if_some(&mut body, "start_cmd", args.start_cmd.clone());
+    insert_if_some(&mut body, "start_user", args.start_user.clone());
     insert_if_some(&mut body, "ready_cmd", args.ready_cmd.clone());
     insert_if_some_u32(&mut body, "ready_timeout_secs", args.ready_timeout_secs);
     if !environment.is_empty() {
