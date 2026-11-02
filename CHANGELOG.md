@@ -9,6 +9,20 @@ Pre-releases use `X.Y.Z-alpha.N` (for example `0.2.0-alpha.1`) and are published
 as GitHub prereleases so `install` without `GRAVIXLAYER_VERSION` continues to
 resolve the latest **stable** release.
 
+## [0.1.20] - 2026-11-01
+
+### Added
+- **Wave A-D `runtime browser` commands**: `emulate`, `intercept`,
+  `intercept-clear`, `auth`, `extension-load`, `extension-unload`,
+  `cdp-endpoint`, `cdp-endpoint-stop`, `approval-request` (parked
+  request) and `approval-resolve`, `content`,
+  `cookies`/`cookie-set`/`cookie-delete`/
+  `cookie-clear`, `download-delete`, `recording-start`/`recording-stop`
+  (per target), `recording-export`, `profile-export`, `profile-import`,
+  `replay`, and `fork`. `browser action` accepts the new verbs
+  `select`, `check`, `uncheck`, `focus`, `blur`, `scroll-into-view`,
+  `drag-to` (with `--drop`), and `upload`.
+
 ## [0.1.19] - 2026-10-31
 
 ### Added
