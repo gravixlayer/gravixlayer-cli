@@ -392,8 +392,11 @@ async fn events(ctx: &AppContext, args: TemplateBuildStatusArgs) -> anyhow::Resu
             let message = ev.get("message").and_then(|m| m.as_str()).unwrap_or("");
             match kind {
                 "step" => {
+                    // `message` is the milestone detail; `step` is the
+                    // shared phase label — same choice the log viewer makes.
                     let step = ev.get("step").and_then(|s| s.as_str()).unwrap_or("step");
-                    println!("\n▸ {step}");
+                    let text = if message.is_empty() { step } else { message };
+                    println!("{text}");
                 }
                 "stdout" => print!("{message}"),
                 "stderr" => eprint!("{message}"),

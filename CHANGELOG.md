@@ -18,6 +18,11 @@ resolve the latest **stable** release.
   <name>` set the login the template entrypoint runs as, serialized as
   `start_user` on the wire.
 
+### Changed
+- `template build`/`template events` milestone lines print the message
+  text plainly — no `▸` marker and no inserted blank line — matching
+  the dashboard log view line-for-line.
+
 ### Fixed
 - **`runtime browser emulate` now sends the wire's flat fields** —
   `--viewport` JSON maps to `width`/`height`/`device_scale_factor`,
