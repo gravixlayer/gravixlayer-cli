@@ -11,6 +11,8 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+## [0.1.21] - 2026-11-04
+
 ### Added
 - `runtime browser view-control <shared|human|agent>` sets the browser
   plane's takeover mode — symmetric with `runtime desktop view-control`.
