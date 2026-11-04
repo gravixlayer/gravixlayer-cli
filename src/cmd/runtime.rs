@@ -2570,6 +2570,22 @@ async fn browser(ctx: &AppContext, cmd: RuntimeBrowserCommand) -> anyhow::Result
                 }
             });
         }
+        RuntimeBrowserCommand::ViewControl(a) => {
+            super::validate_resource_id(&a.id, "runtime")?;
+            anyhow::ensure!(
+                matches!(a.mode.as_str(), "shared" | "human" | "agent"),
+                "mode must be shared|human|agent, got {:?}",
+                a.mode
+            );
+            let r = ctx
+                .api
+                .runtime_browser()
+                .view_control(&a.id, &a.browser, &a.mode)
+                .await?;
+            output::print_or_json(ctx.output, &r, || {
+                println!("{r:#}");
+            });
+        }
         RuntimeBrowserCommand::Dialog(a) => {
             super::validate_resource_id(&a.id, "runtime")?;
             ctx.api

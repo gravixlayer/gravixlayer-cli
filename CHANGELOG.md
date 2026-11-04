@@ -12,6 +12,11 @@ resolve the latest **stable** release.
 ## [Unreleased]
 
 ### Added
+- `runtime browser view-control <shared|human|agent>` sets the browser
+  plane's takeover mode — symmetric with `runtime desktop view-control`.
+  Browser status now surfaces `control_mode` and the live-view presence
+  roster (`viewers`).
+
 - `runtime exec --user <name>` runs the command as the named guest
   user (validated server-side; defaults to the session user).
 - `template build --start-user <name>` and `agent build --start-user

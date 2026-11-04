@@ -42,6 +42,32 @@ pub struct BrowserStatusResponse {
     pub state: String,
     #[serde(default)]
     pub targets: Vec<TargetInfo>,
+    /// Live-view takeover mode: shared | human | agent.
+    #[serde(default)]
+    pub control_mode: String,
+    /// Live-view presence roster — viewers plus the agent pointer slot.
+    #[serde(default)]
+    pub viewers: Vec<Presence>,
+}
+
+/// One participant in a live-view presence roster. Identity is
+/// self-asserted display metadata — never an auth input.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Presence {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub color: String,
+    #[serde(default)]
+    pub agent: bool,
+    #[serde(default)]
+    pub x: f64,
+    #[serde(default)]
+    pub y: f64,
+    #[serde(default)]
+    pub pressed: bool,
 }
 
 /// A browser tab. Command verbs (`back`/`forward`/`reload`/`activate`) and
@@ -493,6 +519,25 @@ impl<'a> RuntimeBrowserApi<'a> {
             .execute("runtime.browser.status", || {
                 self.client
                     .get(self.url(runtime_id, &format!("/{}/status", seg(browser_id))))
+            })
+            .await
+    }
+
+    /// `POST .../browser/<bid>/view/control` — takeover mode
+    /// `shared` | `human` | `agent`. Under `human` the browser keeps
+    /// answering reads but rejects agent `action` calls until the mode
+    /// returns — same contract as the display plane.
+    pub async fn view_control(
+        &self,
+        runtime_id: &str,
+        browser_id: &str,
+        mode: &str,
+    ) -> Result<Value, ApiError> {
+        self.client
+            .execute("runtime.browser.view.control", || {
+                self.client
+                    .post(self.url(runtime_id, &format!("/{}/view/control", seg(browser_id))))
+                    .json(&json!({"mode": mode}))
             })
             .await
     }
@@ -2546,6 +2591,26 @@ mod tests {
             .unwrap();
         m.assert_async().await;
         assert_eq!(r["mode"], "human");
+    }
+
+    #[tokio::test]
+    async fn browser_view_control_posts_the_mode() {
+        let server = MockServer::start_async().await;
+        let m = server
+            .mock_async(|when, then| {
+                when.method(POST)
+                    .path(path("browser/b9/view/control"))
+                    .json_body(json!({"mode": "agent"}));
+                then.status(200).json_body(json!({"mode": "agent"}));
+            })
+            .await;
+        let r = client(&server)
+            .runtime_browser()
+            .view_control(RT, "b9", "agent")
+            .await
+            .unwrap();
+        m.assert_async().await;
+        assert_eq!(r["mode"], "agent");
     }
 
     #[tokio::test]

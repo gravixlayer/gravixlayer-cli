@@ -330,6 +330,8 @@ pub enum RuntimeBrowserCommand {
     Pdf(RuntimeBrowserPdfArgs),
     /// Mint a live-watch URL a human can open
     View(RuntimeBrowserViewArgs),
+    /// Live-view takeover mode (shared|human|agent)
+    ViewControl(RuntimeBrowserViewControlArgs),
     /// Answer or dismiss a pending JavaScript dialog
     Dialog(RuntimeBrowserDialogArgs),
     /// List a browser's targets (tabs)
@@ -816,6 +818,18 @@ pub struct RuntimeBrowserViewArgs {
     /// control (input allowed) | watch (view-only link)
     #[arg(long)]
     pub role: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct RuntimeBrowserViewControlArgs {
+    /// Runtime ID (UUID)
+    pub id: String,
+    /// Browser ID (e.g. b1)
+    #[arg(long, default_value = "b1")]
+    pub browser: String,
+    /// shared | human | agent
+    #[arg(value_parser = ["shared", "human", "agent"])]
+    pub mode: String,
 }
 
 // ── display arg structs ─────────────────────────────────────────────────────
