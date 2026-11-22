@@ -117,8 +117,8 @@ Manage persistent user configuration stored in `~/.gravixlayer/config.toml`.
 ```bash
 grx config set base_url https://api.gravixlayer.ai
 grx config set default_template base-small
-grx config set default_region us-east-1
-grx config set default_cloud aws
+grx config set default_region us-central-1
+grx config set default_cloud gravix
 ```
 
 ### `grx config show`
@@ -153,8 +153,8 @@ grx runtime create [OPTIONS]
 
 Options:
   --template <NAME>     VM image template      [default: base-small]
-  --cloud <CLOUD>       Cloud provider         [default: aws]
-  --region <REGION>     Region                 [default: us-east-1]
+  --cloud <CLOUD>       Cloud provider         [default: gravix]
+  --region <REGION>     Region                 [default: us-central-1]
   --timeout <SECS>      Max idle timeout       [default: none]
   --env <K=V>           Set environment var    (repeatable)
   --wait                Poll until status=running before returning

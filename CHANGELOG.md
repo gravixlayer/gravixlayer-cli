@@ -11,6 +11,12 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+## [0.1.22] - 2026-11-22
+
+### Changed
+
+- The default cloud and region are now `gravix` / `us-central-1` (were `aws` / `us-east-1`) for `runtime create`, `agent dev`, and a profile with no `default_cloud` / `default_region`. A profile that sets them, or `--cloud` / `--region`, keeps its placement.
+
 ## [0.1.21] - 2026-11-04
 
 ### Added
