@@ -11,6 +11,10 @@ resolve the latest **stable** release.
 
 ## [Unreleased]
 
+### Changed
+- `scripts/test_cli.sh` default placement values are now `gravix` /
+  `us-central-1` (were `aws` / `us-east-1`).
+
 ## [0.1.22] - 2026-11-22
 
 ### Changed
